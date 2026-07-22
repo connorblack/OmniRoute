@@ -405,5 +405,12 @@
       "undici": "^6.27.0"
     },
     "adm-zip": "^0.6.0"
+  },
+  "allowScripts": {
+    "@parcel/watcher": true,
+    "@swc/core": true,
+    "better-sqlite3": true,
+    "esbuild": true,
+    "sharp": true
   }
 }
