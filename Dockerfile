@@ -221,7 +221,7 @@ USER root
 RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
   --mount=type=cache,id=apt-lists,target=/var/lib/apt/lists,sharing=locked \
   apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates docker.io docker-compose \
+  && apt-get install -y --no-install-recommends git ca-certificates curl docker.io docker-compose \
   && rm -rf /var/lib/apt/lists/* \
   && git config --system url."https://github.com/".insteadOf "ssh://git@github.com/"
 
@@ -243,11 +243,28 @@ RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
 # silently-skipped postinstall will NOT fail this build.
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   npm install -g --no-audit --no-fund \
-  --allow-scripts=@anthropic-ai/claude-code,droid,openclaw,@google/genai,tree-sitter-bash,protobufjs \
-  @openai/codex @anthropic-ai/claude-code droid openclaw@latest \
+  --allow-scripts=@anthropic-ai/claude-code,droid,openclaw,opencode-ai,@google/genai,tree-sitter-bash,protobufjs \
+  @openai/codex @anthropic-ai/claude-code droid openclaw@latest opencode-ai \
   && claude --version \
   && codex --version \
   && droid --version \
-  && openclaw --version
+  && openclaw --version \
+  && opencode --version
+
+# cursor-agent has no npm package, so use the vendor installer. It is written
+# entirely against $HOME (`~/.local/share/cursor-agent/versions/<v>` plus a
+# `~/.local/bin` symlink), and $HOME here is root's — unreadable by the `node`
+# user this image runs as. Point HOME at a world-readable prefix instead and
+# link the result onto PATH; `src/lib/providerModels/cursorAgent.ts` probes
+# /usr/local/bin/cursor-agent among its candidates.
+#
+# Deliberately NOT pinning a version: the installer script served by
+# cursor.com/install carries the current version inline, so this tracks
+# upstream the same way the npm installs above do.
+ENV CURSOR_AGENT_HOME=/opt/cursor-agent
+RUN HOME="$CURSOR_AGENT_HOME" sh -c 'curl -fsS https://cursor.com/install | bash' \
+  && ln -sf "$(readlink -f "$CURSOR_AGENT_HOME/.local/bin/cursor-agent")" /usr/local/bin/cursor-agent \
+  && chmod -R a+rX "$CURSOR_AGENT_HOME" \
+  && cursor-agent --version
 
 USER node
