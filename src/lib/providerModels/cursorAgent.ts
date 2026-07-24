@@ -141,9 +141,27 @@ export async function fetchCursorAgentModels(
   // cursor-agent prints "Available models: ..." to stderr and exits non-zero
   // when given an unknown model id, so we intentionally pass `--help` as the
   // model value to coerce it into listing.
+  //
+  // `--trust` is required. cursor-agent gates on workspace trust *before* it
+  // parses `--model`, so from any directory the user has not interactively
+  // trusted it prints
+  //
+  //     ⚠ Workspace Trust Required
+  //       Do you trust the contents of this directory?  <cwd>
+  //       ... Pass --trust, --yolo, or -f if you trust this directory
+  //
+  // instead of the model list, and we fail with the thoroughly unhelpful
+  // "cursor-agent did not return an 'Available models:' line". That bites any
+  // non-interactive host — a container's cwd is never trusted — which is
+  // exactly where this probe runs.
+  //
+  // Granting trust is safe *for this call specifically*: `--model --help` only
+  // makes cursor-agent print its model list and exit non-zero. It starts no
+  // agent, reads no workspace file and executes nothing, so the trust prompt
+  // has nothing to protect against here.
   let result: { stdout: string; stderr: string };
   try {
-    result = await runCursorAgent(binary, ["--model", "--help"], timeoutMs);
+    result = await runCursorAgent(binary, ["--trust", "--model", "--help"], timeoutMs);
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
     if (e?.code === "ENOENT") {
