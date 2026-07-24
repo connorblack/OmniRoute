@@ -128,7 +128,22 @@ export async function injectServiceModelsIntoManifest(
           : await shouldExposeServiceModels(provider.id);
         if (!shouldExpose) return provider;
 
-        const models = pickServiceModels(provider.id, reader);
+        // Read by the SERVICE TOOL name, not the plugin id. The sync writes the
+        // model list to key_value under the tool name (`cliproxy`), while this
+        // manifest iterates plugin ids (`cliproxyapi`) — so passing provider.id
+        // straight through looked up `serviceModels/cliproxyapi`, which never
+        // exists, and CLIProxyAPI silently contributed 0 models no matter how
+        // many it had synced. `shouldExposeServiceModels` a few lines above
+        // already does this same mapping; this call site was simply missed.
+        //
+        // 9router hides the bug because its plugin id and tool name are both
+        // "9router" (see SERVICE_BACKEND_EXPOSURE_TOOL_BY_PLUGIN_ID), so
+        // cliproxyapi is the only affected backend today.
+        //
+        // Model ids are unaffected: normalizeServiceModelId only prefixes ids
+        // that contain no "/", and synced ids are already "cliproxy/<model>".
+        const serviceTool = getServiceToolFromPluginId(provider.id) ?? provider.id;
+        const models = pickServiceModels(serviceTool, reader);
         if (models.length === 0) return provider;
 
         const mergedModels = [...provider.models];
