@@ -226,7 +226,28 @@ RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
   && git config --system url."https://github.com/".insteadOf "ssh://git@github.com/"
 
 # Install CLI tools globally. Separate layer from apt for better cache reuse.
+#
+# `--allow-scripts` is REQUIRED. The base stage installs npm@latest, and npm 11
+# blocks lifecycle scripts for global installs by default — it only warns:
+#
+#   npm warn install-scripts @anthropic-ai/claude-code@2.1.219 (postinstall: node install.cjs)
+#   npm warn install-scripts droid@0.179.0 (postinstall: node install.js)
+#   npm warn install-scripts openclaw@2026.7.1-2 (preinstall: ...; postinstall: ...)
+#
+# and then exits 0, so the build looks clean. The damage only surfaces at
+# runtime: claude-code's postinstall is what fetches its platform-native
+# binary, so without it every `claude` invocation dies with
+# "Error: claude native binary not installed." openclaw likewise never unpacks
+# its bundled plugins. The allowlist below is verbatim what npm itself prints
+# as the remedy. Keep it in sync when the CLI set changes — and note that a
+# silently-skipped postinstall will NOT fail this build.
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
-  npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
+  npm install -g --no-audit --no-fund \
+  --allow-scripts=@anthropic-ai/claude-code,droid,openclaw,@google/genai,tree-sitter-bash,protobufjs \
+  @openai/codex @anthropic-ai/claude-code droid openclaw@latest \
+  && claude --version \
+  && codex --version \
+  && droid --version \
+  && openclaw --version
 
 USER node
