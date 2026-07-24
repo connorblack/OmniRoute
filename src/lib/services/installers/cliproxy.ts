@@ -109,7 +109,10 @@ export function resolveSpawnArgs(port: number): SpawnArgs {
 
   return {
     command: symlinkPath,
-    args: ["-c", configPath],
+    // CLIProxyAPI defines `-config` only; Go's flag package rejects the
+    // undefined `-c` and calls os.Exit(2), which the supervisor reports as
+    // "Fast crash (exited with code 2)" with no other diagnostic.
+    args: ["-config", configPath],
     env: { ...process.env },
     cwd: CONFIG_DIR,
   };

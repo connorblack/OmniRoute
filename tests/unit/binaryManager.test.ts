@@ -38,11 +38,25 @@ describe("binaryManager", () => {
       assert.equal(mod.getAssetName("linux", "amd64"), "CLIProxyAPI_{version}_linux_amd64.tar.gz");
     });
 
-    it("should return .tar.gz for darwin", () => {
+    // CLIProxyAPI ships 64-bit ARM as `aarch64`; there has never been an
+    // `*_arm64.*` asset, so emitting the Go spelling made every arm64 install
+    // fail with "No asset for <platform>/arm64".
+    it("should map arm64 to aarch64 for darwin", () => {
       assert.equal(
         mod.getAssetName("darwin", "arm64"),
-        "CLIProxyAPI_{version}_darwin_arm64.tar.gz"
+        "CLIProxyAPI_{version}_darwin_aarch64.tar.gz"
       );
+    });
+
+    it("should map arm64 to aarch64 for linux", () => {
+      assert.equal(
+        mod.getAssetName("linux", "arm64"),
+        "CLIProxyAPI_{version}_linux_aarch64.tar.gz"
+      );
+    });
+
+    it("should map arm64 to aarch64 for windows", () => {
+      assert.equal(mod.getAssetName("windows", "arm64"), "CLIProxyAPI_{version}_windows_aarch64.zip");
     });
 
     it("should return .zip for windows", () => {
