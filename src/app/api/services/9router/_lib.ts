@@ -39,6 +39,15 @@ export async function getOrInitSupervisor(): Promise<ServiceSupervisor> {
       healthIntervalMs: 2_000,
       stopTimeoutMs: 15_000,
       logsBufferBytes: 5_242_880,
+      // #6205 parity with bootstrapEmbeddedServices(): these services bind a
+      // FIXED port, so probe before spawning. Without this, pressing Start while
+      // an instance is already listening spawns a duplicate that dies with
+      // EADDRINUSE, the UI reports the useless "Fast crash (exited with code 0)",
+      // and the healthy process is orphaned (status/pid overwritten with the dead
+      // one). Whichever factory registers the supervisor first wins, and the
+      // dashboard polls /status, so this on-demand path usually wins the race —
+      // which is exactly how the guard got bypassed in practice.
+      probeBeforeSpawn: true,
     });
 
     registerSupervisor(sup);
