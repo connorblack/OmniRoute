@@ -42,7 +42,8 @@ export async function startProcess(
   const actualConfigDir = configDir || defaultConfigDir();
   await writeConfig(actualConfigDir, actualPort);
 
-  const child = spawn(binaryPath, ["-c", path.join(actualConfigDir, "config.yaml")], {
+  // `-config`, not `-c` — see resolveSpawnArgs in services/installers/cliproxy.ts.
+  const child = spawn(binaryPath, ["-config", path.join(actualConfigDir, "config.yaml")], {
     detached: false,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env },

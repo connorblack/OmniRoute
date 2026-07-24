@@ -30,10 +30,20 @@ function detectArch(): Arch {
   return "amd64";
 }
 
+/**
+ * CLIProxyAPI publishes 64-bit ARM assets as `aarch64`, not the Go `arm64`
+ * spelling we use internally (verified across v7.2.80 → v7.2.98; there has
+ * never been an `*_arm64.*` asset). Without this mapping, every arm64 host —
+ * Apple Silicon and arm64 Linux alike — asks for a filename the release does
+ * not contain and install fails with "No asset for <platform>/arm64".
+ * `src/lib/oauth/services/cursor.ts` already does the same translation.
+ */
+const RELEASE_ARCH: Record<Arch, string> = { amd64: "amd64", arm64: "aarch64" };
+
 export function getAssetName(platform?: Platform, arch?: Arch): string {
   const plat = platform || detectPlatform();
   const arc = arch || detectArch();
-  return `CLIProxyAPI_{version}_${plat}_${arc}${plat === "windows" ? ".zip" : ".tar.gz"}`;
+  return `CLIProxyAPI_{version}_${plat}_${RELEASE_ARCH[arc]}${plat === "windows" ? ".zip" : ".tar.gz"}`;
 }
 
 export function getTargetPlatform(): { platform: Platform; arch: Arch } {
@@ -116,8 +126,10 @@ export async function downloadRelease(
   if (!release) throw new Error(`Version ${version} not found`);
 
   const { platform, arch } = getTargetPlatform();
-  const ext = platform === "windows" ? ".zip" : ".tar.gz";
-  const assetName = `CLIProxyAPI_${release.version}_${platform}_${arch}${ext}`;
+  // Build via getAssetName so the naming rules (incl. the arm64 -> aarch64
+  // mapping) live in exactly one place — this used to be a second, divergent
+  // copy of the template.
+  const assetName = getAssetName(platform, arch).replace("{version}", release.version);
   const asset = release.assets.find((a) => a.name === assetName);
   if (!asset) throw new Error(`No asset for ${platform}/${arch}`);
 
