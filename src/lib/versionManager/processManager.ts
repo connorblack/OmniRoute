@@ -63,9 +63,10 @@ export async function startProcess(
   const actualConfigDir = configDir || defaultConfigDir();
   await writeConfig(actualConfigDir, actualPort);
 
+  // `--config`, not `-c` — see resolveSpawnArgs in services/installers/cliproxy.ts.
   const child = spawn(
     binaryPath,
-    ["-c", path.join(actualConfigDir, "config.yaml")],
+    ["--config", path.join(actualConfigDir, "config.yaml")],
     buildCliproxyapiSpawnOptions()
   );
 

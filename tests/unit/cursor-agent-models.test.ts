@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
+  fetchCursorAgentModels,
   humanizeCursorModelId,
   parseCursorAgentModels,
 } from "../../src/lib/providerModels/cursorAgent";
@@ -68,4 +72,56 @@ test("humanizeCursorModelId pretty-prints common patterns", () => {
   assert.equal(humanizeCursorModelId("grok-4.5-fast-medium"), "Grok 4.5 Fast Medium");
   assert.equal(humanizeCursorModelId("grok-4.5-xhigh"), "Grok 4.5 XHigh");
   assert.equal(humanizeCursorModelId("grok-4.5-fast-xhigh"), "Grok 4.5 Fast XHigh");
+});
+
+test("fetchCursorAgentModels passes --trust on both the --list-models catalog call and the legacy --model --help fallback", async () => {
+  // Regression: cursor-agent gates on workspace trust BEFORE parsing the rest of
+  // argv, so without --trust it prints "⚠ Workspace Trust Required" instead of
+  // the model list from any directory the user has not interactively trusted —
+  // which is every directory on a non-interactive host (a container's cwd is
+  // never trusted). The probe then died with the useless "cursor-agent did not
+  // return a model catalog" error. Covers both call sites: the modern
+  // --list-models catalog flag (tried first) and the legacy --model --help
+  // fallback (tried only when --list-models yields nothing, e.g. an older
+  // cursor-agent release).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-agent-args-"));
+  const argvLog = path.join(dir, "argv.txt");
+  const fake = path.join(dir, "cursor-agent");
+
+  // Stand-in for the real binary: appends each call's argv as one line, then
+  // mimics an older cursor-agent that doesn't understand --list-models (so
+  // fetchCursorAgentModels falls through to the legacy --model --help path,
+  // which mimics the real "Available models: ..." on stderr with a non-zero exit).
+  fs.writeFileSync(
+    fake,
+    `#!/bin/sh
+{ printf '%s ' "$@"; printf '\\n'; } >> ${JSON.stringify(argvLog)}
+if [ "$1" = "--trust" ] && [ "$2" = "--list-models" ]; then
+  echo "unknown flag: --list-models" >&2
+  exit 1
+fi
+echo "Cannot use this model: --help. Available models: auto, composer-2" >&2
+exit 1
+`
+  );
+  fs.chmodSync(fake, 0o755);
+
+  try {
+    const models = await fetchCursorAgentModels({ binary: fake, timeoutMs: 10000 });
+    assert.deepEqual(
+      models.map((m) => m.id),
+      ["auto", "composer-2"]
+    );
+
+    const calls = fs
+      .readFileSync(argvLog, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/));
+    assert.equal(calls.length, 2, `expected 2 calls (list-models, then fallback), got: ${JSON.stringify(calls)}`);
+    assert.deepEqual(calls[0], ["--trust", "--list-models"]);
+    assert.deepEqual(calls[1], ["--trust", "--model", "--help"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,11 @@ import AgentBridgePageClient from "./AgentBridgePageClient";
 import type { AgentBridgePageData } from "./AgentBridgePageClient";
 import { normalizeAgentBridgeState } from "./normalizeState";
 
+// The page reads live provider and MITM state. Explicitly avoid static export:
+// when no local server is running at build time, the guarded state fetch returns
+// defaults and Next retries this route until its static-generation timeout.
+export const dynamic = "force-dynamic";
+
 /**
  * AgentBridge page — Server Component entry point.
  * Fetches initial state from the backend API and passes to client orchestrator.
@@ -39,9 +44,7 @@ export default async function AgentBridgePage() {
   };
 
   try {
-    const base =
-      process.env.OMNIROUTE_BASE_URL ??
-      `http://127.0.0.1:${process.env.PORT ?? 20128}`;
+    const base = process.env.OMNIROUTE_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 20128}`;
     const res = await fetch(`${base}/api/tools/agent-bridge/state`, {
       cache: "no-store",
       headers: { "x-internal-fetch": "1" },

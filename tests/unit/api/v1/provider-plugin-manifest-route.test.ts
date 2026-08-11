@@ -94,7 +94,9 @@ test("provider plugin manifest route injects service models with a custom reader
           { id: "9router/chat", name: "Already namespaced", available: true },
         ];
       }
-      if (toolName === "cliproxyapi") {
+      // Keyed on the SERVICE TOOL name, which is what the sync writes to
+      // key_value — the plugin id is "cliproxyapi", the tool is "cliproxy".
+      if (toolName === "cliproxy") {
         return [{ id: "model-clone", name: "Cliproxy Test", available: true }];
       }
       return [];
@@ -108,7 +110,25 @@ test("provider plugin manifest route injects service models with a custom reader
 
   const cliproxyEntry = getProvider(withModels, "cliproxyapi");
   assert.ok(cliproxyEntry);
-  assert.ok(hasModel(cliproxyEntry, "cliproxyapi/model-clone"));
+  assert.ok(hasModel(cliproxyEntry, "cliproxy/model-clone"));
+});
+
+test("service model reader is keyed by tool name, not plugin id", async () => {
+  // Regression: injectServiceModelsIntoManifest used to pass provider.id
+  // ("cliproxyapi") to the reader, while the sync stores models under the tool
+  // name ("cliproxy"). The lookup missed every time and CLIProxyAPI contributed
+  // 0 models regardless of how many it had synced. 9router masked it because
+  // its plugin id and tool name are identical.
+  const seen: string[] = [];
+  const manifest = withServicePluginEntries(generateProviderPluginManifest());
+
+  await injectServiceModelsIntoManifest(manifest, (toolName: string): ServiceModel[] => {
+    seen.push(toolName);
+    return [];
+  });
+
+  assert.ok(seen.includes("cliproxy"), `reader should be called with "cliproxy", saw: ${seen.join(", ")}`);
+  assert.ok(!seen.includes("cliproxyapi"), `reader must not be called with the plugin id, saw: ${seen.join(", ")}`);
 });
 
 test("provider plugin manifest route injects providers absent from upstream registry", async () => {
@@ -119,7 +139,7 @@ test("provider plugin manifest route injects providers absent from upstream regi
       if (toolName === "9router") {
         return [{ id: "injected-model", name: "Runtime Model", available: true }];
       }
-      if (toolName === "cliproxyapi") {
+      if (toolName === "cliproxy") {
         return [{ id: "proxy-model", name: "Proxy Model", available: true }];
       }
       return [];
@@ -135,7 +155,7 @@ test("provider plugin manifest route injects providers absent from upstream regi
 
   const cliproxyEntry = getProvider(withModels, "cliproxyapi");
   assert.ok(cliproxyEntry);
-  assert.ok(hasModel(cliproxyEntry, "cliproxyapi/proxy-model"));
+  assert.ok(hasModel(cliproxyEntry, "cliproxy/proxy-model"));
   assert.equal(cliproxyEntry.passthroughModels, true);
   assert.equal(cliproxyEntry.endpoints?.modelsUrl, "/v1/models");
   assert.equal(cliproxyEntry.format, "openai");
@@ -184,8 +204,9 @@ test("provider plugin manifest route injects for cliproxy when exposure is enabl
   const manifest = withServicePluginEntries(generateProviderPluginManifest());
   const withModels = await injectServiceModelsIntoManifest(
     manifest,
+    // model reader is keyed by TOOL name ("cliproxy") ...
     (toolName: string): ServiceModel[] => {
-      if (toolName === "cliproxyapi") {
+      if (toolName === "cliproxy") {
         return [{ id: "model-clone", name: "Cliproxy Test" }];
       }
       return [];
@@ -195,25 +216,28 @@ test("provider plugin manifest route injects for cliproxy when exposure is enabl
 
   const cliproxyEntry = getProvider(withModels, "cliproxyapi");
   assert.ok(cliproxyEntry);
-  assert.ok(hasModel(cliproxyEntry, "cliproxyapi/model-clone"));
+  assert.ok(hasModel(cliproxyEntry, "cliproxy/model-clone"));
 });
 
 test("provider plugin manifest route skips cliproxy models when exposure is disabled", async () => {
   const manifest = withServicePluginEntries(generateProviderPluginManifest());
   const withModels = await injectServiceModelsIntoManifest(
     manifest,
+    // ... while the EXPOSURE reader is keyed by PLUGIN ID ("cliproxyapi"),
+    // because injectServiceModelsIntoManifest passes provider.id to it and
+    // shouldExposeServiceModels does the plugin -> tool mapping internally.
     (toolName: string): ServiceModel[] => {
-      if (toolName === "cliproxyapi") {
+      if (toolName === "cliproxy") {
         return [{ id: "model-clone", name: "Cliproxy Test" }];
       }
       return [];
     },
-    (toolName: string): boolean => (toolName === "cliproxyapi" ? false : true),
+    (pluginId: string): boolean => (pluginId === "cliproxyapi" ? false : true),
   );
 
   const cliproxyEntry = getProvider(withModels, "cliproxyapi");
   assert.ok(cliproxyEntry);
-  assert.equal(hasModel(cliproxyEntry, "cliproxyapi/model-clone"), false);
+  assert.equal(hasModel(cliproxyEntry, "cliproxy/model-clone"), false);
 });
 
 test("provider plugin manifest supports conditional sidecar refreshes", async () => {

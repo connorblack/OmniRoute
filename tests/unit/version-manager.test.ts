@@ -297,7 +297,7 @@ test("processManager writes config, starts a process, stops it gracefully and re
     assert.equal(spawnStub.calls.length, 1);
     assert.equal(spawnStub.calls[0].command, "/tmp/cli-proxy-api");
     assert.deepEqual(spawnStub.calls[0].args, [
-      "-c",
+      "--config",
       path.join(TEST_CONFIG_DIR, "custom", "config.yaml"),
     ]);
 

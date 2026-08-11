@@ -58,7 +58,7 @@ describe("getInstalledVersion", () => {
 describe("resolveSpawnArgs", () => {
   it("uses the correct binary symlink path and config flag", () => {
     // Simulate what resolveSpawnArgs does without hitting the real filesystem.
-    // The key contract: command is at $DATA_DIR/bin/cliproxyapi and args are ["-c", configPath].
+    // The key contract: command is at $DATA_DIR/bin/cliproxyapi and args are ["--config", configPath].
     const fakeDataDir = "/fake";
     const port = 8317;
 

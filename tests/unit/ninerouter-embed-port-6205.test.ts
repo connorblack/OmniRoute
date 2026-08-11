@@ -15,7 +15,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -96,5 +96,41 @@ describe("#6205 B — pre-spawn port probe avoids raw EADDRINUSE", () => {
     // Health is authoritative: a 2xx means a real instance is serving.
     const decision = decidePreSpawn({ healthy: true, portInUse: false }, 20130);
     assert.equal(decision.action, "adopt");
+  });
+});
+
+// ─── SUB-BUG C: the guard must be enabled on EVERY construction path ──────────
+
+describe("#6205 C — on-demand supervisor factories keep pre-spawn probe parity", () => {
+  // decidePreSpawn() above is only consulted when the supervisor was built with
+  // `probeBeforeSpawn: true`. bootstrapEmbeddedServices() sets it, but each
+  // service also has an on-demand factory in src/app/api/services/<tool>/_lib.ts
+  // used when bootstrap has not registered one yet. Whichever registers first
+  // wins the registry — and the dashboard polls /status, so the on-demand path
+  // frequently wins.
+  //
+  // When those factories omitted the flag, pressing Start in the Embedded
+  // Services panel while an instance was already listening spawned a duplicate
+  // that died with EADDRINUSE. The UI showed only "Fast crash (exited with code
+  // 0)" and the healthy process was orphaned, its pid/status overwritten by the
+  // dead one.
+  const tools = ["cliproxy", "9router", "mux", "bifrost"];
+
+  for (const tool of tools) {
+    it(`${tool}/_lib.ts builds its supervisor with probeBeforeSpawn`, () => {
+      const file = path.join(repoRoot, `src/app/api/services/${tool}/_lib.ts`);
+      assert.ok(existsSync(file), `${file} must exist`);
+      const src = readFileSync(file, "utf8");
+      assert.match(
+        src,
+        /probeBeforeSpawn:\s*true/,
+        `${tool}/_lib.ts must set probeBeforeSpawn: true to match bootstrapEmbeddedServices()`
+      );
+    });
+  }
+
+  it("bootstrapEmbeddedServices still sets it (the reference path)", () => {
+    const src = readFileSync(path.join(repoRoot, "src/lib/services/bootstrap.ts"), "utf8");
+    assert.match(src, /probeBeforeSpawn:\s*true/);
   });
 });

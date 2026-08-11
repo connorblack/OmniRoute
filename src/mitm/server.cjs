@@ -4,14 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const dns = require("dns");
 const { promisify } = require("util");
-const os = require("os");
-
-// Resolve data directory — mirrors src/lib/dataPaths.ts logic.
-// This file runs as a standalone CommonJS process and cannot import the ES module.
-function getDataDir() {
-  if (process.env.DATA_DIR) return path.resolve(process.env.DATA_DIR.trim());
-  return path.join(os.homedir(), ".omniroute");
-}
+const { resolveMitmServerDataDir } = require("./_internal/dataDir.cjs");
 
 // Configuration
 // Keep in sync with src/mitm/targets/antigravity.ts. Antigravity hosts are the
@@ -49,7 +42,7 @@ const ROUTER_BASE_URL = (
 const ROUTER_URL = `${ROUTER_BASE_URL}/v1/chat/completions`;
 const ROUTER_MESSAGES_URL = `${ROUTER_BASE_URL}/v1/messages`;
 const API_KEY = process.env.ROUTER_API_KEY;
-const DATA_DIR = getDataDir();
+const DATA_DIR = resolveMitmServerDataDir();
 const DB_FILE = path.join(DATA_DIR, "db.json");
 const SQLITE_FILE = path.join(DATA_DIR, "storage.sqlite");
 

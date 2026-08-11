@@ -164,12 +164,29 @@ export async function fetchCursorAgentModels(
   }
 
   const startedAt = Date.now();
+  // `--trust` is required on every invocation below. cursor-agent gates on
+  // workspace trust *before* it parses the rest of argv, so from any directory
+  // the user has not interactively trusted it prints
+  //
+  //     ⚠ Workspace Trust Required
+  //       Do you trust the contents of this directory?  <cwd>
+  //       ... Pass --trust, --yolo, or -f if you trust this directory
+  //
+  // instead of the model list, and we fail with the thoroughly unhelpful
+  // "cursor-agent did not return an 'Available models:' line". That bites any
+  // non-interactive host — a container's cwd is never trusted — which is
+  // exactly where this probe runs. Applies to both the modern `--list-models`
+  // catalog flag and the legacy `--model --help` fallback below.
+  //
+  // Granting trust is safe for these calls specifically: none of them start an
+  // agent, read a workspace file, or execute anything, so the trust prompt has
+  // nothing to protect against here.
   let result: { stdout: string; stderr: string };
   try {
     // Modern Cursor Agent releases provide a dedicated catalog flag. Prefer the
     // flag over the equivalent `models` subcommand because older releases can
     // interpret an unknown positional subcommand as an agent prompt.
-    result = await runCursorAgent(binary, ["--list-models"], timeoutMs);
+    result = await runCursorAgent(binary, ["--trust", "--list-models"], timeoutMs);
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
     if (e?.code === "ENOENT") {
@@ -184,7 +201,7 @@ export async function fetchCursorAgentModels(
   if (ids.length === 0 && !/Authentication required|Not logged in/i.test(combined)) {
     const remainingTimeoutMs = timeoutMs - (Date.now() - startedAt);
     if (remainingTimeoutMs > 0) {
-      result = await runCursorAgent(binary, ["--model", "--help"], remainingTimeoutMs);
+      result = await runCursorAgent(binary, ["--trust", "--model", "--help"], remainingTimeoutMs);
       combined = `${result.stdout}\n${result.stderr}`;
       ids = parseCursorAgentModels(combined);
     }

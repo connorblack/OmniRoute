@@ -240,12 +240,50 @@ USER root
 RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
   --mount=type=cache,id=apt-lists,target=/var/lib/apt/lists,sharing=locked \
   apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates docker.io docker-compose \
+  && apt-get install -y --no-install-recommends git ca-certificates curl docker.io docker-compose \
   && rm -rf /var/lib/apt/lists/* \
   && git config --system url."https://github.com/".insteadOf "ssh://git@github.com/"
 
 # Install CLI tools globally. Separate layer from apt for better cache reuse.
+#
+# `--allow-scripts` is REQUIRED. The base stage installs npm@latest, and npm 11
+# blocks lifecycle scripts for global installs by default — it only warns:
+#
+#   npm warn install-scripts @anthropic-ai/claude-code@2.1.219 (postinstall: node install.cjs)
+#   npm warn install-scripts droid@0.179.0 (postinstall: node install.js)
+#   npm warn install-scripts openclaw@2026.7.1-2 (preinstall: ...; postinstall: ...)
+#
+# and then exits 0, so the build looks clean. The damage only surfaces at
+# runtime: claude-code's postinstall is what fetches its platform-native
+# binary, so without it every `claude` invocation dies with
+# "Error: claude native binary not installed." openclaw likewise never unpacks
+# its bundled plugins. The allowlist below is verbatim what npm itself prints
+# as the remedy. Keep it in sync when the CLI set changes — and note that a
+# silently-skipped postinstall will NOT fail this build.
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
-  npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
+  npm install -g --no-audit --no-fund \
+  --allow-scripts=@anthropic-ai/claude-code,droid,openclaw,opencode-ai,@google/genai,tree-sitter-bash,protobufjs \
+  @openai/codex @anthropic-ai/claude-code droid openclaw@latest opencode-ai \
+  && claude --version \
+  && codex --version \
+  && droid --version \
+  && openclaw --version \
+  && opencode --version
+
+# cursor-agent has no npm package, so use the vendor installer. It is written
+# entirely against $HOME (`~/.local/share/cursor-agent/versions/<v>` plus a
+# `~/.local/bin` symlink), and $HOME here is root's — unreadable by the `node`
+# user this image runs as. Point HOME at a world-readable prefix instead and
+# link the result onto PATH; `src/lib/providerModels/cursorAgent.ts` probes
+# /usr/local/bin/cursor-agent among its candidates.
+#
+# Deliberately NOT pinning a version: the installer script served by
+# cursor.com/install carries the current version inline, so this tracks
+# upstream the same way the npm installs above do.
+ENV CURSOR_AGENT_HOME=/opt/cursor-agent
+RUN HOME="$CURSOR_AGENT_HOME" sh -c 'curl -fsS https://cursor.com/install | bash' \
+  && ln -sf "$(readlink -f "$CURSOR_AGENT_HOME/.local/bin/cursor-agent")" /usr/local/bin/cursor-agent \
+  && chmod -R a+rX "$CURSOR_AGENT_HOME" \
+  && cursor-agent --version
 
 USER node
