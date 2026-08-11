@@ -174,9 +174,17 @@ export function isPrivateLanHost(hostHeader: string | null): boolean {
  *   triggers the auto-update flow (spawns git checkout + npm install + pm2).
  *   Hard Rules #15/#17 still apply to POST.
  */
-export const LOCAL_ONLY_API_GET_EXEMPTIONS: ReadonlySet<string> = new Set([
-  "/api/system/version",
-]);
+export const LOCAL_ONLY_API_GET_EXEMPTIONS: ReadonlySet<string> = new Set(["/api/system/version"]);
+
+/**
+ * Safe read-only embedded-service endpoints. These expose authenticated status
+ * and the in-memory supervisor log buffer, but do not install, spawn, stop, or
+ * mutate a service. Lifecycle endpoints remain LOCAL_ONLY through the broader
+ * `/api/services/` prefix and the spawn-capable deny-list.
+ */
+export const LOCAL_ONLY_API_GET_EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
+  /^\/api\/services\/[^/]+\/(?:status|logs)\/?$/,
+];
 
 /** Safe HTTP methods that can be exempted for read-only paths. */
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -196,11 +204,15 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  *                conservative classification used by `check-route-guard-membership`.
  */
 export function isLocalOnlyPath(path: string, method?: string): boolean {
-  // Method-aware GET exemption: only exact-match paths in the exemption set
-  // are eligible; prefix/wildcard matching is intentionally NOT used to avoid
-  // accidentally opening sub-paths of a spawn-capable route.
-  if (method && SAFE_METHODS.has(method.toUpperCase()) && LOCAL_ONLY_API_GET_EXEMPTIONS.has(path)) {
-    return false;
+  // Method-aware GET exemptions are exact or tightly anchored patterns. Never
+  // use a broad prefix here: install/start/stop/update must remain local-only.
+  if (method && SAFE_METHODS.has(method.toUpperCase())) {
+    if (
+      LOCAL_ONLY_API_GET_EXEMPTIONS.has(path) ||
+      LOCAL_ONLY_API_GET_EXEMPT_PATTERNS.some((pattern) => pattern.test(path))
+    ) {
+      return false;
+    }
   }
   return (
     LOCAL_ONLY_API_PREFIXES.some((p) => path === p || path.startsWith(p)) ||

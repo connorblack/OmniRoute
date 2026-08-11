@@ -6,12 +6,8 @@ import { updateSettingsSchema } from "@/shared/validation/settingsSchemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { resolveModelLockoutSettings } from "@/lib/resilience/modelLockoutSettings";
-import {
-  validateProxyUrl,
-  upsertUpstreamProxyConfig,
-  getUpstreamProxyConfig,
-} from "@/lib/db/upstreamProxy";
-import { getProviderConnections } from "@/lib/db/providers";
+import { validateProxyUrl, getUpstreamProxyConfig } from "@/lib/db/upstreamProxy";
+import { persistGlobalCliproxyapiConfig } from "@/lib/services/cliproxyGlobalConfig";
 import { clearCliproxyapiUrlCache } from "@omniroute/open-sse/executors/cliproxyapi.ts";
 import {
   ensurePersistentManagementPasswordHash,
@@ -154,10 +150,7 @@ function attemptedKeysOf(body: Record<string, unknown> | null | undefined): stri
   if (!body || typeof body !== "object") return [];
   return Object.keys(body).filter(
     (k) =>
-      k !== "currentPassword" &&
-      k !== "newPassword" &&
-      k !== "password" &&
-      k !== "expectedRevision"
+      k !== "currentPassword" && k !== "newPassword" && k !== "password" && k !== "expectedRevision"
   );
 }
 
@@ -426,41 +419,10 @@ export async function PATCH(request: Request) {
     const cpaModelMapping = rawBody.cliproxyapi_model_mapping as Record<string, string> | undefined;
 
     if (cpaFallback !== undefined || cpaUrl !== undefined || cpaModelMapping !== undefined) {
-      const enabled =
-        cpaFallback ?? (settings as Record<string, unknown>).cliproxyapi_fallback_enabled;
-      const mode = enabled ? "fallback" : "native";
-
-      // Get all distinct active provider IDs so each one gets its own
-      // upstream_proxy_config row. chatCore reads per-provider config
-      // (e.g. getUpstreamProxyConfig("anthropic")), not a single global row.
-      // Embedded service IDs are not real routing targets and must be skipped.
-      const EMBEDDED_SERVICE_IDS = new Set(["cliproxyapi", "9router"]);
-      const activeConnections = await getProviderConnections({ isActive: true });
-      const activeProviderIds = [
-        ...new Set(
-          activeConnections
-            .map((c: Record<string, unknown>) => c.provider as string)
-            .filter((id: string) => !EMBEDDED_SERVICE_IDS.has(id))
-        ),
-      ];
-
-      for (const providerId of activeProviderIds) {
-        await upsertUpstreamProxyConfig({
-          providerId,
-          mode,
-          enabled: !!enabled,
-          ...(cpaModelMapping !== undefined ? { cliproxyapiModelMapping: cpaModelMapping } : {}),
-        });
-      }
-
-      // Update the "cliproxyapi" sentinel row used by GET /api/settings to
-      // retrieve cliproxyapi_model_mapping. This row is NOT used for routing
-      // (chatCore reads per-real-provider rows above); it exists solely as
-      // storage for the global model-mapping blob.
-      await upsertUpstreamProxyConfig({
-        providerId: "cliproxyapi",
-        mode,
-        enabled: !!enabled,
+      // Global settings are metadata and a kill-switch, not permission to route
+      // every active provider through one proxy. Per-provider routing remains an
+      // explicit opt-in through /api/upstream-proxy/{providerId}.
+      await persistGlobalCliproxyapiConfig({
         ...(cpaModelMapping !== undefined ? { cliproxyapiModelMapping: cpaModelMapping } : {}),
       });
     }

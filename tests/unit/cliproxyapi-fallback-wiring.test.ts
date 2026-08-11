@@ -24,25 +24,16 @@ process.env.DATA_DIR = testDataDir;
 // Dynamic imports AFTER DATA_DIR is set so core.ts picks up the temp path.
 const coreDb = await import("../../src/lib/db/core.ts");
 const upstreamProxyDb = await import("../../src/lib/db/upstreamProxy.ts");
+const { persistGlobalCliproxyapiConfig } =
+  await import("../../src/lib/services/cliproxyGlobalConfig.ts");
 
 // ─── Executor imports (clearCliproxyapiUrlCache + resolveCliproxyapiBaseUrl) ──
 
 // Import the executor module to get the real exported functions.
 // This may be a cached import if cliproxyapi-executor.test.ts ran first — that
 // is intentional; we test the live module state, not a fresh copy.
-const {
-  clearCliproxyapiUrlCache,
-  resolveCliproxyapiBaseUrl,
-} = await import("../../open-sse/executors/cliproxyapi.ts");
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/** Mirrors the EMBEDDED_SERVICE_IDS filter in src/app/api/settings/route.ts. */
-const EMBEDDED_SERVICE_IDS = new Set(["cliproxyapi", "9router"]);
-
-function filterEmbeddedServices(providerIds: string[]): string[] {
-  return providerIds.filter((id) => !EMBEDDED_SERVICE_IDS.has(id));
-}
+const { clearCliproxyapiUrlCache, resolveCliproxyapiBaseUrl } =
+  await import("../../open-sse/executors/cliproxyapi.ts");
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 
@@ -121,96 +112,58 @@ describe("CLIProxyAPI fallback wiring", () => {
       const url2 = await resolveCliproxyapiBaseUrl();
 
       assert.ok(url1.endsWith(":8001"), `url1 should end with :8001, got: ${url1}`);
-      assert.ok(url2.endsWith(":8002"), `url2 should end with :8002 after cache clear, got: ${url2}`);
+      assert.ok(
+        url2.endsWith(":8002"),
+        `url2 should end with :8002 after cache clear, got: ${url2}`
+      );
       assert.notEqual(url1, url2);
     });
   });
 
-  // ── upsertUpstreamProxyConfig — settings-loop filter behaviour ─────────────
+  // ── global settings persistence must not fan out to providers ──────────────
 
   describe("settings sync to upstream_proxy_config — real DB functions", () => {
-    it("creates rows for each real provider ID", async () => {
-      const realProviders = ["anthropic", "openai", "deepseek", "groq"];
-      for (const providerId of filterEmbeddedServices(realProviders)) {
-        await upstreamProxyDb.upsertUpstreamProxyConfig({
-          providerId,
-          mode: "fallback",
-          enabled: true,
-        });
-      }
+    it("stores global aliases only on a non-routable sentinel", async () => {
+      await persistGlobalCliproxyapiConfig({
+        cliproxyapiModelMapping: { "custom/model": "gpt-5.4-mini" },
+      });
 
-      for (const id of realProviders) {
-        const row = await upstreamProxyDb.getUpstreamProxyConfig(id);
-        assert.ok(row, `Expected row for provider=${id}`);
-        assert.equal(row.mode, "fallback");
-        assert.equal(row.enabled, true);
-      }
+      const sentinel = await upstreamProxyDb.getUpstreamProxyConfig("cliproxyapi");
+      assert.ok(sentinel);
+      assert.equal(sentinel.mode, "native");
+      assert.equal(sentinel.enabled, false);
+      assert.deepEqual(sentinel.cliproxyapiModelMapping, { "custom/model": "gpt-5.4-mini" });
+      assert.equal(await upstreamProxyDb.getUpstreamProxyConfig("openai"), null);
+      assert.equal(await upstreamProxyDb.getUpstreamProxyConfig("anthropic"), null);
     });
 
-    it("filterEmbeddedServices skips cliproxyapi and 9router from the provider loop", () => {
-      const mixed = ["anthropic", "cliproxyapi", "9router", "openai"];
-      const filtered = filterEmbeddedServices(mixed);
-      assert.deepEqual(filtered, ["anthropic", "openai"]);
-      assert.ok(!filtered.includes("cliproxyapi"), "cliproxyapi must not appear in filtered list");
-      assert.ok(!filtered.includes("9router"), "9router must not appear in filtered list");
-    });
-
-    it("does NOT create a routing row for cliproxyapi via the provider loop", async () => {
-      // Simulate the PATCH handler loop: activeProviderIds come from connections
-      // but embedded services are filtered before upsert.
-      const activeProviderIds = filterEmbeddedServices(["anthropic", "cliproxyapi", "openai"]);
-
-      for (const providerId of activeProviderIds) {
-        await upstreamProxyDb.upsertUpstreamProxyConfig({
-          providerId,
-          mode: "fallback",
-          enabled: true,
-        });
-      }
-
-      // The loop must NOT have created a row with providerId='cliproxyapi'.
-      const cliproxyRow = await upstreamProxyDb.getUpstreamProxyConfig("cliproxyapi");
-      assert.equal(
-        cliproxyRow,
-        null,
-        "The provider loop must NOT create an upstream_proxy_config row for 'cliproxyapi'"
-      );
-
-      // Real provider rows must exist.
-      const anthropicRow = await upstreamProxyDb.getUpstreamProxyConfig("anthropic");
-      assert.ok(anthropicRow, "anthropic row must exist");
-      const openaiRow = await upstreamProxyDb.getUpstreamProxyConfig("openai");
-      assert.ok(openaiRow, "openai row must exist");
-    });
-
-    it("disables rows when fallback is turned off (mode becomes native)", async () => {
+    it("does not overwrite an explicitly configured provider row", async () => {
       await upstreamProxyDb.upsertUpstreamProxyConfig({
         providerId: "anthropic",
-        mode: "native",
-        enabled: false,
+        mode: "fallback",
+        enabled: true,
+        cliproxyapiModelMapping: { "claude-custom": "claude-sonnet-5" },
+      });
+      await persistGlobalCliproxyapiConfig({
+        cliproxyapiModelMapping: { "global-custom": "gpt-5.4-mini" },
       });
 
       const row = await upstreamProxyDb.getUpstreamProxyConfig("anthropic");
       assert.ok(row);
-      assert.equal(row.mode, "native");
-      assert.equal(row.enabled, false);
+      assert.equal(row.mode, "fallback");
+      assert.equal(row.enabled, true);
+      assert.deepEqual(row.cliproxyapiModelMapping, { "claude-custom": "claude-sonnet-5" });
     });
 
-    it("sentinel cliproxyapi row (for model mapping) exists separately from the routing loop", async () => {
-      // The PATCH handler creates the cliproxyapi sentinel row AFTER the loop.
-      // This is intentional: it stores the global model-mapping blob that
-      // GET /api/settings reads back via getUpstreamProxyConfig("cliproxyapi").
-      // It is NOT created by the provider loop (which filters it out).
-      await upstreamProxyDb.upsertUpstreamProxyConfig({
-        providerId: "cliproxyapi",
-        mode: "fallback",
-        enabled: true,
-        cliproxyapiModelMapping: { "ag/gemini-3-pro": "gemini-3-pro-high" },
+    it("preserves global aliases when an unrelated global setting is saved", async () => {
+      await persistGlobalCliproxyapiConfig({
+        cliproxyapiModelMapping: { "custom/model": "gpt-5.4-mini" },
       });
+      await persistGlobalCliproxyapiConfig({});
 
-      const row = await upstreamProxyDb.getUpstreamProxyConfig("cliproxyapi");
-      assert.ok(row, "sentinel cliproxyapi row must exist");
-      assert.deepEqual(row.cliproxyapiModelMapping, { "ag/gemini-3-pro": "gemini-3-pro-high" });
+      const sentinel = await upstreamProxyDb.getUpstreamProxyConfig("cliproxyapi");
+      assert.ok(sentinel);
+      assert.deepEqual(sentinel.cliproxyapiModelMapping, { "custom/model": "gpt-5.4-mini" });
     });
   });
 

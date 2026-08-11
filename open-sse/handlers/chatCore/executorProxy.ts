@@ -83,12 +83,16 @@ export async function resolveExecutorWithProxy(
 
   const cfg = await getUpstreamProxyConfigCached(prov);
   if (!cfg.enabled || cfg.mode === "native") return getExecutor(prov);
+  const globalCfg =
+    prov === "cliproxyapi" ? null : await getUpstreamProxyConfigCached("cliproxyapi");
+  const modelMapping =
+    cfg.cliproxyapiModelMapping ?? globalCfg?.cliproxyapiModelMapping ?? undefined;
 
   if (cfg.mode === "cliproxyapi") {
     log?.info?.("UPSTREAM_PROXY", `${prov} routed through CLIProxyAPI (passthrough)`);
     const { dedicatedApiKey } = await loadCliproxyapiSettings();
     return wrapExecutorWithCliproxyapiCredentials(
-      wrapExecutorWithCliproxyapiModelMapping(getExecutor("cliproxyapi"), cfg.cliproxyapiModelMapping),
+      wrapExecutorWithCliproxyapiModelMapping(getExecutor("cliproxyapi"), modelMapping),
       dedicatedApiKey
     );
   }
@@ -101,10 +105,11 @@ export async function resolveExecutorWithProxy(
   // #7645: the CLIProxyAPI retry leg must authenticate with the dedicated
   // key, never the native provider's own (already-failed) credential.
   const proxyExec = wrapExecutorWithCliproxyapiCredentials(
-    wrapExecutorWithCliproxyapiModelMapping(getExecutor("cliproxyapi"), cfg.cliproxyapiModelMapping),
+    wrapExecutorWithCliproxyapiModelMapping(getExecutor("cliproxyapi"), modelMapping),
     dedicatedApiKey
   );
   const isRetryableStatus = (s: number) => fallbackCodes.includes(s) || s === 0;
+  const isSuccessfulStatus = (s: number) => s >= 200 && s < 300;
 
   const wrapper = Object.create(nativeExec);
   wrapper.execute = async (input: {
@@ -123,12 +128,20 @@ export async function resolveExecutorWithProxy(
       const errMsg = err instanceof Error ? err.message : String(err);
       log?.info?.("UPSTREAM_PROXY", `${prov} native error (${errMsg}), retrying via CLIProxyAPI`);
       try {
-        return await proxyExec.execute(input);
+        const proxyResult = await proxyExec.execute(input);
+        if (isSuccessfulStatus(proxyResult.response.status)) return proxyResult;
+        log?.error?.(
+          "UPSTREAM_PROXY",
+          `${prov} CLIProxyAPI fallback also failed (${proxyResult.response.status}); preserving native error`
+        );
       } catch (proxyErr) {
         const proxyMsg = proxyErr instanceof Error ? proxyErr.message : String(proxyErr);
-        log?.error?.("UPSTREAM_PROXY", `${prov} CLIProxyAPI fallback also failed: ${proxyMsg}`);
-        throw proxyErr;
+        log?.error?.(
+          "UPSTREAM_PROXY",
+          `${prov} CLIProxyAPI fallback also failed (${proxyMsg}); preserving native error`
+        );
       }
+      throw err;
     }
 
     if (!isRetryableStatus(result.response.status)) {
@@ -139,12 +152,20 @@ export async function resolveExecutorWithProxy(
       `${prov} native failed (${result.response.status}), retrying via CLIProxyAPI`
     );
     try {
-      return await proxyExec.execute(input);
+      const proxyResult = await proxyExec.execute(input);
+      if (isSuccessfulStatus(proxyResult.response.status)) return proxyResult;
+      log?.error?.(
+        "UPSTREAM_PROXY",
+        `${prov} CLIProxyAPI fallback also failed (${proxyResult.response.status}); preserving native ${result.response.status}`
+      );
     } catch (proxyErr) {
       const proxyMsg = proxyErr instanceof Error ? proxyErr.message : String(proxyErr);
-      log?.error?.("UPSTREAM_PROXY", `${prov} CLIProxyAPI fallback also failed: ${proxyMsg}`);
-      throw proxyErr;
+      log?.error?.(
+        "UPSTREAM_PROXY",
+        `${prov} CLIProxyAPI fallback also failed (${proxyMsg}); preserving native ${result.response.status}`
+      );
     }
+    return result;
   };
   return wrapper;
 }

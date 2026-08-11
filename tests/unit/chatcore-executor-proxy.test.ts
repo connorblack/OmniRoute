@@ -17,13 +17,11 @@ process.env.DATA_DIR = testDataDir;
 // Dynamic imports AFTER DATA_DIR is set so core.ts picks up the temp path.
 const coreDb = await import("../../src/lib/db/core.ts");
 const upstreamProxyDb = await import("../../src/lib/db/upstreamProxy.ts");
-const { resolveExecutorWithProxy } = await import(
-  "../../open-sse/handlers/chatCore/executorProxy.ts"
-);
+const { resolveExecutorWithProxy } =
+  await import("../../open-sse/handlers/chatCore/executorProxy.ts");
 const { getExecutor } = await import("../../open-sse/executors/index.ts");
-const { clearUpstreamProxyConfigCache } = await import(
-  "../../open-sse/handlers/chatCore/comboContextCache.ts"
-);
+const { clearUpstreamProxyConfigCache } =
+  await import("../../open-sse/handlers/chatCore/comboContextCache.ts");
 
 before(async () => {
   await coreDb.ensureDbInitialized();
@@ -77,6 +75,114 @@ test("mode 'fallback' returns a distinct wrapper owning its own execute()", asyn
   assert.notEqual(exec, getExecutor("openai"));
   assert.notEqual(exec, getExecutor("cliproxyapi"));
   assert.equal(typeof exec.execute, "function");
+});
+
+test("failed CLIProxy fallback preserves the native retryable response", async () => {
+  const nativeExec = getExecutor("openai");
+  const proxyExec = getExecutor("cliproxyapi");
+  const originalNativeExecute = nativeExec.execute;
+  const originalProxyExecute = proxyExec.execute;
+  const nativeResult = { response: new Response("rate limited", { status: 429 }) };
+  const proxyResult = { response: new Response("unknown provider", { status: 400 }) };
+
+  try {
+    nativeExec.execute = async () => nativeResult;
+    proxyExec.execute = async () => proxyResult;
+    await upstreamProxyDb.upsertUpstreamProxyConfig({
+      providerId: "openai",
+      mode: "fallback",
+      enabled: true,
+    });
+    clearUpstreamProxyConfigCache("openai");
+
+    const exec = await resolveExecutorWithProxy("openai");
+    const result = await exec.execute({
+      model: "gpt-test",
+      body: {},
+      stream: false,
+      credentials: {},
+    });
+
+    assert.equal(result, nativeResult);
+    assert.equal(result.response.status, 429);
+  } finally {
+    nativeExec.execute = originalNativeExecute;
+    proxyExec.execute = originalProxyExecute;
+  }
+});
+
+test("successful CLIProxy fallback replaces the native retryable response", async () => {
+  const nativeExec = getExecutor("openai");
+  const proxyExec = getExecutor("cliproxyapi");
+  const originalNativeExecute = nativeExec.execute;
+  const originalProxyExecute = proxyExec.execute;
+  const nativeResult = { response: new Response("rate limited", { status: 429 }) };
+  const proxyResult = { response: new Response("ok", { status: 200 }) };
+
+  try {
+    nativeExec.execute = async () => nativeResult;
+    proxyExec.execute = async () => proxyResult;
+    await upstreamProxyDb.upsertUpstreamProxyConfig({
+      providerId: "openai",
+      mode: "fallback",
+      enabled: true,
+    });
+    clearUpstreamProxyConfigCache("openai");
+
+    const exec = await resolveExecutorWithProxy("openai");
+    const result = await exec.execute({
+      model: "gpt-test",
+      body: {},
+      stream: false,
+      credentials: {},
+    });
+
+    assert.equal(result, proxyResult);
+  } finally {
+    nativeExec.execute = originalNativeExecute;
+    proxyExec.execute = originalProxyExecute;
+  }
+});
+
+test("fallback uses the global sentinel model mapping for an opted-in provider", async () => {
+  const nativeExec = getExecutor("openai");
+  const proxyExec = getExecutor("cliproxyapi");
+  const originalNativeExecute = nativeExec.execute;
+  const originalProxyExecute = proxyExec.execute;
+  let proxyModel: string | undefined;
+
+  try {
+    nativeExec.execute = async () => ({ response: new Response("limited", { status: 429 }) });
+    proxyExec.execute = async (input: { model?: string }) => {
+      proxyModel = input.model;
+      return { response: new Response("ok", { status: 200 }) };
+    };
+    await upstreamProxyDb.upsertUpstreamProxyConfig({
+      providerId: "openai",
+      mode: "fallback",
+      enabled: true,
+    });
+    await upstreamProxyDb.upsertUpstreamProxyConfig({
+      providerId: "cliproxyapi",
+      mode: "native",
+      enabled: false,
+      cliproxyapiModelMapping: { "native-model": "gpt-5.4-mini" },
+    });
+    clearUpstreamProxyConfigCache();
+
+    const exec = await resolveExecutorWithProxy("openai");
+    await exec.execute({
+      model: "native-model",
+      body: {},
+      stream: false,
+      credentials: {},
+    });
+
+    assert.equal(proxyModel, "gpt-5.4-mini");
+  } finally {
+    nativeExec.execute = originalNativeExecute;
+    proxyExec.execute = originalProxyExecute;
+  }
 });
 
 // === Per-connection routing override (#6339) ===
