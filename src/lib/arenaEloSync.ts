@@ -17,6 +17,7 @@ import {
   bulkUpsertModelIntelligence,
   deleteExpiredIntelligence,
   deleteModelIntelligenceBySource,
+  getFreshModelIntelligenceSourceSummary,
   type ModelIntelligenceEntry,
 } from "./db/modelIntelligence";
 
@@ -176,6 +177,19 @@ let lastSyncModelCount = 0;
 let activeSyncIntervalMs = SYNC_INTERVAL_MS;
 let firstSyncDone = false;
 let syncInProgress = false;
+
+/**
+ * Hydrate process-local status from persisted data and decide whether startup
+ * needs a network fetch. Coolify/container restarts must not refetch data that
+ * is already valid in SQLite.
+ */
+export function shouldRunArenaEloInitialSync(): boolean {
+  const summary = getFreshModelIntelligenceSourceSummary("arena_elo");
+  if (summary.count === 0) return true;
+  lastSyncTime = summary.latestSyncedAt;
+  lastSyncModelCount = summary.count;
+  return false;
+}
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -470,21 +484,27 @@ function startPeriodicSync(intervalMs?: number): void {
   activeSyncIntervalMs = interval;
   console.log(`[ARENA_ELO_SYNC] Starting periodic sync every ${interval / 1000}s`);
 
-  // Initial sync (non-blocking)
-  syncArenaElo()
-    .then((result) => {
-      if (result.success) {
-        console.log(
-          `[ARENA_ELO_SYNC] Initial sync complete: ${result.modelCount} model intelligence entries`
+  if (shouldRunArenaEloInitialSync()) {
+    // Initial sync (non-blocking) when no usable persisted cache exists.
+    syncArenaElo()
+      .then((result) => {
+        if (result.success) {
+          console.log(
+            `[ARENA_ELO_SYNC] Initial sync complete: ${result.modelCount} model intelligence entries`
+          );
+        }
+      })
+      .catch((err) => {
+        console.warn(
+          "[ARENA_ELO_SYNC] Initial sync error:",
+          err instanceof Error ? err.message : err
         );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ARENA_ELO_SYNC] Initial sync error:",
-        err instanceof Error ? err.message : err
-      );
-    });
+      });
+  } else {
+    console.log(
+      `[ARENA_ELO_SYNC] Skipping startup fetch; ${lastSyncModelCount} persisted entries remain fresh`
+    );
+  }
 
   syncTimer = setInterval(() => {
     syncArenaElo()

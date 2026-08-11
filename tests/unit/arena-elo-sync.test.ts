@@ -35,6 +35,7 @@ const {
   fetchArenaLeaderboards,
   syncArenaElo,
   getArenaEloSyncStatus,
+  shouldRunArenaEloInitialSync,
   initArenaEloSync,
   stopArenaEloSync,
 } = await import("../../src/lib/arenaEloSync.ts");
@@ -799,6 +800,35 @@ describe("getArenaEloSyncStatus()", () => {
 
     const status = getArenaEloSyncStatus();
     assert.strictEqual(status.enabled, false);
+  });
+});
+
+describe("shouldRunArenaEloInitialSync()", () => {
+  it("skips the startup fetch when persisted Arena data is still fresh", () => {
+    testAdapter
+      .prepare(
+        `INSERT INTO model_intelligence
+         (model, source, category, score, elo_raw, confidence, synced_at, expires_at)
+         VALUES (?, 'arena_elo', 'coding', 0.9, 1300, 'high', datetime('now'), datetime('now', '+1 day'))`
+      )
+      .run("fresh-model");
+
+    assert.strictEqual(shouldRunArenaEloInitialSync(), false);
+    const status = getArenaEloSyncStatus();
+    assert.ok(status.lastSync);
+    assert.strictEqual(status.lastSyncModelCount, 1);
+  });
+
+  it("runs the startup fetch when persisted Arena data is expired", () => {
+    testAdapter
+      .prepare(
+        `INSERT INTO model_intelligence
+         (model, source, category, score, elo_raw, confidence, synced_at, expires_at)
+         VALUES (?, 'arena_elo', 'coding', 0.9, 1300, 'high', datetime('now', '-2 days'), datetime('now', '-1 day'))`
+      )
+      .run("expired-model");
+
+    assert.strictEqual(shouldRunArenaEloInitialSync(), true);
   });
 });
 
