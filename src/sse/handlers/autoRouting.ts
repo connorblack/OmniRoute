@@ -66,7 +66,12 @@ async function applyAutoPrefix(
       await import("@omniroute/open-sse/services/autoCombo/autoPrefix.ts");
     const parsed = parseAutoPrefix(model);
     if (!parsed.valid) {
-      if (!state.spec) log.warn("AUTO", `Invalid auto prefix format: ${model}`);
+      // Persisted user combos may intentionally use the auto/* namespace
+      // (for example auto/extractor). Their lookup happens after this built-in
+      // classifier, so an unknown built-in suffix is not itself a warning.
+      if (!state.spec) {
+        log.debug("AUTO", `No built-in auto route for ${model}; deferring to combo lookup`);
+      }
       return state;
     }
 
