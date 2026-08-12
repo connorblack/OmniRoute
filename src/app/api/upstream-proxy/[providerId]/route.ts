@@ -11,7 +11,10 @@ import { validateBody, isValidationFailure } from "@/shared/validation/helpers";
 const upstreamProxySchema = z.object({
   mode: z.enum(["native", "cliproxyapi", "fallback"]).default("native"),
   enabled: z.boolean().optional().default(true),
+  cliproxyapiModelMapping: z.record(z.string(), z.string()).optional(),
 });
+
+export { upstreamProxySchema };
 
 export async function GET(
   _request: Request,
@@ -43,12 +46,14 @@ export async function PUT(
     return NextResponse.json(validation.error, { status: 400 });
   }
 
-  const { mode, enabled } = validation.data;
+  const { mode, enabled, cliproxyapiModelMapping } = validation.data;
+  const existing = await getUpstreamProxyConfig(providerId);
 
   const config = await upsertUpstreamProxyConfig({
     providerId,
     mode,
     enabled,
+    cliproxyapiModelMapping: cliproxyapiModelMapping ?? existing?.cliproxyapiModelMapping ?? null,
   });
 
   return NextResponse.json(config);

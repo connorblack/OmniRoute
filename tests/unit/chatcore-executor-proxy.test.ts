@@ -16,6 +16,7 @@ process.env.DATA_DIR = testDataDir;
 
 // Dynamic imports AFTER DATA_DIR is set so core.ts picks up the temp path.
 const coreDb = await import("../../src/lib/db/core.ts");
+const settingsDb = await import("../../src/lib/db/settings.ts");
 const upstreamProxyDb = await import("../../src/lib/db/upstreamProxy.ts");
 const { resolveExecutorWithProxy } =
   await import("../../open-sse/handlers/chatCore/executorProxy.ts");
@@ -27,8 +28,9 @@ before(async () => {
   await coreDb.ensureDbInitialized();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   clearUpstreamProxyConfigCache();
+  await settingsDb.updateSettings({ cliproxyapi_fallback_enabled: false });
 });
 
 after(() => {
@@ -64,7 +66,19 @@ test("mode 'cliproxyapi' returns the CLIProxyAPI passthrough executor", async ()
   assert.equal(exec, getExecutor("cliproxyapi"));
 });
 
-test("mode 'fallback' returns a distinct wrapper owning its own execute()", async () => {
+test("global kill switch keeps provider fallback mode on the native executor", async () => {
+  await upstreamProxyDb.upsertUpstreamProxyConfig({
+    providerId: "openai",
+    mode: "fallback",
+    enabled: true,
+  });
+  clearUpstreamProxyConfigCache("openai");
+  const exec = await resolveExecutorWithProxy("openai");
+  assert.equal(exec, getExecutor("openai"));
+});
+
+test("mode 'fallback' returns a distinct wrapper when globally enabled", async () => {
+  await settingsDb.updateSettings({ cliproxyapi_fallback_enabled: true });
   await upstreamProxyDb.upsertUpstreamProxyConfig({
     providerId: "openai",
     mode: "fallback",
@@ -86,6 +100,7 @@ test("failed CLIProxy fallback preserves the native retryable response", async (
   const proxyResult = { response: new Response("unknown provider", { status: 400 }) };
 
   try {
+    await settingsDb.updateSettings({ cliproxyapi_fallback_enabled: true });
     nativeExec.execute = async () => nativeResult;
     proxyExec.execute = async () => proxyResult;
     await upstreamProxyDb.upsertUpstreamProxyConfig({
@@ -120,6 +135,7 @@ test("successful CLIProxy fallback replaces the native retryable response", asyn
   const proxyResult = { response: new Response("ok", { status: 200 }) };
 
   try {
+    await settingsDb.updateSettings({ cliproxyapi_fallback_enabled: true });
     nativeExec.execute = async () => nativeResult;
     proxyExec.execute = async () => proxyResult;
     await upstreamProxyDb.upsertUpstreamProxyConfig({
@@ -152,6 +168,7 @@ test("fallback uses the global sentinel model mapping for an opted-in provider",
   let proxyModel: string | undefined;
 
   try {
+    await settingsDb.updateSettings({ cliproxyapi_fallback_enabled: true });
     nativeExec.execute = async () => ({ response: new Response("limited", { status: 429 }) });
     proxyExec.execute = async (input: { model?: string }) => {
       proxyModel = input.model;

@@ -3238,6 +3238,7 @@ export async function handleChatCore({
   let providerUrl;
   let providerHeaders;
   let finalBody;
+  let providerResponseFormat = targetFormat;
   let claudePromptCacheLogMeta = null;
 
   try {
@@ -3247,6 +3248,7 @@ export async function handleChatCore({
     providerUrl = result.url;
     providerHeaders = result.headers;
     finalBody = providerRequestCapture.body(result.transformedBody);
+    providerResponseFormat = result.responseFormat || targetFormat;
     const responseConnectionId = getCurrentConnectionId();
     effectiveServiceTier = resolveEffectiveServiceTier(finalBody);
     claudePromptCacheLogMeta = buildClaudePromptCacheLogMeta(
@@ -4028,7 +4030,7 @@ export async function handleChatCore({
       upstreamStream,
       providerHeaders,
       finalBody,
-      targetFormat,
+      targetFormat: providerResponseFormat,
       model,
       log,
     });
@@ -4906,7 +4908,7 @@ export async function handleChatCore({
   // For providers using Responses API format, translate stream back to openai (Chat Completions) format
   // UNLESS client is Droid CLI which expects openai-responses format back
   const needsResponsesTranslation =
-    targetFormat === FORMATS.OPENAI_RESPONSES &&
+    providerResponseFormat === FORMATS.OPENAI_RESPONSES &&
     clientResponseFormat === FORMATS.OPENAI &&
     !isResponsesEndpoint &&
     !isDroidCLI;
@@ -4933,11 +4935,11 @@ export async function handleChatCore({
       // Responses (Codex CLI).
       requestToolIdentityMap
     );
-  } else if (needsTranslation(targetFormat, clientResponseFormat)) {
+  } else if (needsTranslation(providerResponseFormat, clientResponseFormat)) {
     // Standard translation for other providers
-    log?.debug?.("STREAM", `Translation mode: ${targetFormat} → ${clientResponseFormat}`);
+    log?.debug?.("STREAM", `Translation mode: ${providerResponseFormat} → ${clientResponseFormat}`);
     transformStream = createSSETransformStreamWithLogger(
-      targetFormat,
+      providerResponseFormat,
       clientResponseFormat,
       provider,
       reqLogger,

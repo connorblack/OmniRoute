@@ -222,6 +222,30 @@ describe("CliproxyapiExecutor", () => {
       assert.ok(result.response);
     });
 
+    it("keeps Anthropic bodies on /v1/messages and labels the response as claude", async () => {
+      let capturedUrl;
+      globalThis.fetch = async (url) => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ content: [] }), { status: 200 });
+      };
+
+      const exec = new CliproxyapiExecutor();
+      const result = await exec.execute({
+        model: "claude-opus-5",
+        body: {
+          model: "claude-opus-5",
+          system: [{ type: "text", text: "Be brief" }],
+          messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+          max_tokens: 32,
+        },
+        stream: false,
+        credentials: {},
+      });
+
+      assert.equal(capturedUrl, "http://127.0.0.1:8317/v1/messages");
+      assert.equal(result.responseFormat, "claude");
+    });
+
     it("should pass credentials to headers", async () => {
       let capturedHeaders;
       globalThis.fetch = async (_url, options) => {

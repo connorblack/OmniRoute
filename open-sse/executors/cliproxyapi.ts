@@ -19,12 +19,15 @@ import {
   BaseExecutor,
   mergeUpstreamExtraHeaders,
   mergeAbortSignals,
+  type ExecutorLog,
   type ProviderCredentials,
 } from "./base.ts";
 import { HTTP_STATUS, FETCH_TIMEOUT_MS } from "../config/constants.ts";
 import { getProviderPluginManifestHeader } from "../config/providerPluginManifestUrl.ts";
 import { cloakThirdPartyToolNames } from "../services/claudeCodeToolRemapper.ts";
 import { sanitizeClaudeToolSchemas } from "../translator/helpers/schemaCoercion.ts";
+import { FORMATS } from "../translator/formats.ts";
+import { translateRequest } from "../translator/index.ts";
 
 const DEFAULT_PORT = 8317;
 const DEFAULT_HOST = "127.0.0.1";
@@ -132,7 +135,9 @@ export function clearCliproxyapiUrlCache() {
     if (typeof settings.cliproxyapi_url === "string" && settings.cliproxyapi_url.trim()) {
       _cachedSettingsUrl = { url: settings.cliproxyapi_url.trim(), ts: Date.now() };
     }
-  } catch { /* env vars will be used as fallback */ }
+  } catch {
+    /* env vars will be used as fallback */
+  }
 })();
 
 /**
@@ -155,7 +160,9 @@ async function resolveCliproxyapiBaseUrl(): Promise<string> {
       _cachedSettingsUrl = { url, ts: Date.now() };
       return url;
     }
-  } catch { /* fall through to env vars */ }
+  } catch {
+    /* fall through to env vars */
+  }
 
   const host = process.env.CLIPROXYAPI_HOST || DEFAULT_HOST;
   const port = parseInt(process.env.CLIPROXYAPI_PORT || String(DEFAULT_PORT), 10);
@@ -255,6 +262,34 @@ export class CliproxyapiExecutor extends BaseExecutor {
       if (Array.isArray(first?.content)) return true;
     }
     return false;
+  }
+
+  /** Gemini's native generateContent payload is not accepted by CPA's
+   * OpenAI-compatible chat endpoint. Fallback mode receives the body after
+   * chatCore translated it for Gemini, so normalize that shape back to OpenAI
+   * at the CPA boundary. Anthropic bodies remain on CPA's /v1/messages path. */
+  private isGeminiShape(body: unknown): boolean {
+    if (!body || typeof body !== "object") return false;
+    const b = body as Record<string, unknown>;
+    return (
+      Array.isArray(b.contents) ||
+      b.generationConfig !== undefined ||
+      b.systemInstruction !== undefined
+    );
+  }
+
+  private normalizeWireBody(model: string, body: unknown, stream: boolean): unknown {
+    if (!this.isGeminiShape(body)) return body;
+    const cloned = typeof structuredClone === "function" ? structuredClone(body) : body;
+    return translateRequest(
+      FORMATS.GEMINI,
+      FORMATS.OPENAI,
+      model,
+      cloned,
+      stream,
+      null,
+      "cliproxyapi"
+    );
   }
 
   private selectEndpoint(body: unknown): string {
@@ -383,19 +418,20 @@ export class CliproxyapiExecutor extends BaseExecutor {
     stream: boolean;
     credentials: ProviderCredentials;
     signal?: AbortSignal | null;
-    log?: any;
+    log?: ExecutorLog | null;
     upstreamExtraHeaders?: Record<string, string> | null;
   }) {
     // Resolve URL dynamically so settings table cliproxyapi_url is respected.
     // Uses 60s cache to avoid DB reads on every request.
     const baseUrl = await resolveCliproxyapiBaseUrl();
-    const endpoint = this.selectEndpoint(input.body);
+    const normalizedBody = this.normalizeWireBody(input.model, input.body, input.stream);
+    const endpoint = this.selectEndpoint(normalizedBody);
     const url = `${baseUrl}${endpoint}`;
     const shape = endpoint === "/v1/messages" ? "anthropic" : "openai";
     const headers = this.buildHeaders(input.credentials, input.stream);
     const transformedBody = this.transformRequest(
       input.model,
-      input.body,
+      normalizedBody,
       input.stream,
       input.credentials
     );
@@ -428,7 +464,14 @@ export class CliproxyapiExecutor extends BaseExecutor {
       input.log?.warn?.("CPA", `CLIProxyAPI rate limited: ${response.status}`);
     }
 
-    return { response, url, headers, transformedBody, transport: "cliproxyapi" as const };
+    return {
+      response,
+      url,
+      headers,
+      transformedBody,
+      transport: "cliproxyapi" as const,
+      responseFormat: shape === "anthropic" ? FORMATS.CLAUDE : FORMATS.OPENAI,
+    };
   }
 
   /**

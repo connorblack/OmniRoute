@@ -26,6 +26,8 @@ const coreDb = await import("../../src/lib/db/core.ts");
 const upstreamProxyDb = await import("../../src/lib/db/upstreamProxy.ts");
 const { persistGlobalCliproxyapiConfig } =
   await import("../../src/lib/services/cliproxyGlobalConfig.ts");
+const { upstreamProxySchema } =
+  await import("../../src/app/api/upstream-proxy/[providerId]/route.ts");
 
 // ─── Executor imports (clearCliproxyapiUrlCache + resolveCliproxyapiBaseUrl) ──
 
@@ -123,6 +125,18 @@ describe("CLIProxyAPI fallback wiring", () => {
   // ── global settings persistence must not fan out to providers ──────────────
 
   describe("settings sync to upstream_proxy_config — real DB functions", () => {
+    it("accepts a provider-specific CLIProxyAPI model mapping", () => {
+      const parsed = upstreamProxySchema.parse({
+        mode: "fallback",
+        enabled: true,
+        cliproxyapiModelMapping: { "gemini-flash-latest": "gemini-3-flash" },
+      });
+
+      assert.deepEqual(parsed.cliproxyapiModelMapping, {
+        "gemini-flash-latest": "gemini-3-flash",
+      });
+    });
+
     it("stores global aliases only on a non-routable sentinel", async () => {
       await persistGlobalCliproxyapiConfig({
         cliproxyapiModelMapping: { "custom/model": "gpt-5.4-mini" },

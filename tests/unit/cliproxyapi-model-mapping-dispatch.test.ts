@@ -105,6 +105,39 @@ describe("#6876 — cliproxyapiModelMapping applied at dispatch", () => {
     );
   });
 
+  it("converts a Gemini-native mapped request to CLIProxyAPI's OpenAI wire format", async () => {
+    await upstreamProxyDb.upsertUpstreamProxyConfig({
+      providerId: "gemini-mapped-passthrough",
+      mode: "cliproxyapi",
+      enabled: true,
+      cliproxyapiModelMapping: { "gemini-fallback-alias": "gemini-3-flash" },
+    });
+
+    const executor = await resolveExecutorWithProxy("gemini-mapped-passthrough", undefined, null);
+    let executorResult: unknown;
+    const capturedBody = await captureFetchBody(async () => {
+      executorResult = await (executor as ExecutorLike).execute({
+        model: "gemini-fallback-alias",
+        body: {
+          model: "gemini-fallback-alias",
+          contents: [{ role: "user", parts: [{ text: "hi" }] }],
+          generationConfig: { maxOutputTokens: 32 },
+          systemInstruction: { role: "system", parts: [{ text: "Be brief" }] },
+        },
+        stream: false,
+        credentials: {},
+      });
+      return executorResult;
+    });
+
+    assert.equal(capturedBody.model, "gemini-3-flash");
+    assert.ok(Array.isArray(capturedBody.messages));
+    assert.equal(capturedBody.contents, undefined);
+    assert.equal(capturedBody.generationConfig, undefined);
+    assert.equal(capturedBody.systemInstruction, undefined);
+    assert.equal((executorResult as { responseFormat?: string }).responseFormat, "openai");
+  });
+
   it("does NOT remap the model when no mapping is configured (no regression)", async () => {
     await upstreamProxyDb.upsertUpstreamProxyConfig({
       providerId: "anthropic-no-mapping",

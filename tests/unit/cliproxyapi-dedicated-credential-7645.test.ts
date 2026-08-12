@@ -27,12 +27,10 @@ process.env.DATA_DIR = testDataDir;
 const coreDb = await import("../../src/lib/db/core.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const upstreamProxyDb = await import("../../src/lib/db/upstreamProxy.ts");
-const { resolveExecutorWithProxy } = await import(
-  "../../open-sse/handlers/chatCore/executorProxy.ts"
-);
-const { clearUpstreamProxyConfigCache } = await import(
-  "../../open-sse/handlers/chatCore/comboContextCache.ts"
-);
+const { resolveExecutorWithProxy } =
+  await import("../../open-sse/handlers/chatCore/executorProxy.ts");
+const { clearUpstreamProxyConfigCache } =
+  await import("../../open-sse/handlers/chatCore/comboContextCache.ts");
 const { updateSettingsSchema } = await import("../../src/shared/validation/settingsSchemas.ts");
 
 const NATIVE_KEY = "sk-native-provider-key-cliproxyapi-must-not-see";
@@ -105,7 +103,10 @@ describe("#7645 — settingsSchemas has a dedicated cliproxyapi_api_key field", 
 
 describe("#7645 — CLIProxyAPI fallback leg authenticates with the dedicated key", () => {
   it("uses the dedicated cliproxyapi_api_key, not the failed native provider's own credential", async () => {
-    await settingsDb.updateSettings({ cliproxyapi_api_key: DEDICATED_KEY });
+    await settingsDb.updateSettings({
+      cliproxyapi_api_key: DEDICATED_KEY,
+      cliproxyapi_fallback_enabled: true,
+    });
     await upstreamProxyDb.upsertUpstreamProxyConfig({
       providerId: "openai-7645-fallback",
       mode: "fallback",

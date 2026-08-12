@@ -107,6 +107,7 @@ export function normalizeExecutorResult(
         headers?: Record<string, string>;
         transformedBody?: unknown;
         transport?: string;
+        responseFormat?: string;
       }
 ): {
   response: Response;
@@ -114,6 +115,7 @@ export function normalizeExecutorResult(
   headers: Record<string, string>;
   transformedBody: unknown;
   transport?: string;
+  responseFormat?: string;
 } {
   if (result instanceof Response) {
     return { response: result, url: "", headers: {}, transformedBody: null };
@@ -124,6 +126,7 @@ export function normalizeExecutorResult(
     headers: result.headers || {},
     transformedBody: result.transformedBody ?? null,
     transport: result.transport,
+    responseFormat: result.responseFormat,
   };
 }
 

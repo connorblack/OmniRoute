@@ -45,7 +45,15 @@ test("normalizeExecutorResult wraps bare Response and passes through rich result
   const wrapped = normalizeExecutorResult(r);
   assert.equal(wrapped.response, r);
   assert.equal(wrapped.url, "");
-  const rich = normalizeExecutorResult({ response: r, url: "u", headers: { a: "b" } });
+  const rich = normalizeExecutorResult({
+    response: r,
+    url: "u",
+    headers: { a: "b" },
+    transport: "cliproxyapi",
+    responseFormat: "openai",
+  });
   assert.equal(rich.url, "u");
   assert.equal(rich.headers.a, "b");
+  assert.equal(rich.transport, "cliproxyapi");
+  assert.equal(rich.responseFormat, "openai");
 });

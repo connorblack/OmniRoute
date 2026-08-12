@@ -46,19 +46,25 @@ function parseFallbackCodes(raw: unknown): number[] | null {
  * Falls back to defaults / no dedicated key on any read failure.
  */
 async function loadCliproxyapiSettings(): Promise<{
+  fallbackEnabled: boolean;
   fallbackCodes: number[];
   dedicatedApiKey: string | null;
 }> {
   try {
     const allSettings = await getCachedSettings();
     return {
+      fallbackEnabled: allSettings.cliproxyapi_fallback_enabled === true,
       fallbackCodes: parseFallbackCodes(allSettings.cliproxyapi_fallback_codes) ?? [
         ...DEFAULT_FALLBACK_CODES,
       ],
       dedicatedApiKey: resolveDedicatedCliproxyapiApiKey(allSettings),
     };
   } catch {
-    return { fallbackCodes: [...DEFAULT_FALLBACK_CODES], dedicatedApiKey: null };
+    return {
+      fallbackEnabled: false,
+      fallbackCodes: [...DEFAULT_FALLBACK_CODES],
+      dedicatedApiKey: null,
+    };
   }
 }
 
@@ -101,7 +107,14 @@ export async function resolveExecutorWithProxy(
   // The model mapping applies only to the CLIProxyAPI retry leg (proxyExec) — the
   // native leg must keep seeing the original, unmapped model.
   const nativeExec = getExecutor(prov);
-  const { fallbackCodes, dedicatedApiKey } = await loadCliproxyapiSettings();
+  const { fallbackEnabled, fallbackCodes, dedicatedApiKey } = await loadCliproxyapiSettings();
+  if (!fallbackEnabled) {
+    log?.info?.(
+      "UPSTREAM_PROXY",
+      `${prov} CLIProxyAPI fallback disabled by global kill switch; using native executor`
+    );
+    return nativeExec;
+  }
   // #7645: the CLIProxyAPI retry leg must authenticate with the dedicated
   // key, never the native provider's own (already-failed) credential.
   const proxyExec = wrapExecutorWithCliproxyapiCredentials(
