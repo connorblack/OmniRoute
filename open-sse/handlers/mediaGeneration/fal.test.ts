@@ -203,7 +203,7 @@ test("normalizeFalMediaResult rejects a missing artifact", () => {
   assert.deepEqual(normalizeFalMediaResult({}, "video"), {
     success: false,
     status: 502,
-    error: "Fal video generation returned no media URL",
+    error: "Fal video generation returned no video URL",
   });
 });
 

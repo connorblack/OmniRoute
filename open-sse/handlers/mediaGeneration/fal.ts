@@ -192,10 +192,11 @@ export function normalizeFalMediaResult(payload: unknown, kind: MediaKind) {
   const url = stringValue(item?.url);
 
   if (!url) {
+    const artifact = kind === "video" ? "video" : "audio";
     return {
       success: false as const,
       status: 502,
-      error: `Fal ${kind} generation returned no media URL`,
+      error: `Fal ${kind} generation returned no ${artifact} URL`,
     };
   }
 
@@ -244,6 +245,9 @@ async function runFalQueue({
   const startTime = Date.now();
   const baseUrl = providerConfig.baseUrl.replace(/\/$/, "");
   const token = getToken(credentials);
+  if (!token) {
+    return { success: false as const, status: 401, error: "Fal API key is required" };
+  }
   const headers = {
     Authorization: `Key ${token}`,
     "Content-Type": "application/json",

@@ -438,7 +438,9 @@ async function __wbg_init(module_or_path) {
     }
 
     if (module_or_path === undefined) {
-        module_or_path = new URL('wasm_signer_bg.wasm', import.meta.url);
+        // The generated WASM is embedded in this module as WASM_BASE64. Keep the
+        // loader from creating a static file edge to an asset that is not shipped.
+        throw new Error("tinycmsSigner: wasm module not supplied; call initTinyCmsWasm() first");
     }
     const imports = __wbg_get_imports();
 
