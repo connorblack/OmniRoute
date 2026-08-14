@@ -73,11 +73,51 @@ async function getCliTokenHeader() {
   try {
     const mod = await import(join(REPO_ROOT, "bin", "cli", "utils", "cliToken.mjs"));
     const token = await mod.getCliToken();
+    // The helper needs `node-machine-id`, which is a CLI dependency and is NOT
+    // present in the production standalone image — it returns "" there, so this
+    // path is unavailable in a container and we fall through to session login.
     cliTokenHeader = token ? { [mod.CLI_TOKEN_HEADER]: token } : {};
   } catch {
     cliTokenHeader = {};
   }
   return cliTokenHeader;
+}
+
+/**
+ * Session login with the seeded admin password.
+ *
+ * A fresh instance answers 401 on every management route, including
+ * /api/keys — so no API key can be minted remotely, and there is no
+ * credential-free window to exploit. The supported seam is INITIAL_PASSWORD,
+ * which the image uses to set the initial dashboard password on first boot.
+ * The provisioner injects it from a secret store, so nothing is hand-entered.
+ *
+ * Requires JWT_SECRET to be configured; without it the login route returns 500
+ * by design, which is a far clearer failure than a mystery 401.
+ */
+let sessionCookie = null;
+async function getSessionCookie() {
+  if (sessionCookie !== null) return sessionCookie;
+  const password = process.env.OMNIROUTE_BOOTSTRAP_PASSWORD || process.env.INITIAL_PASSWORD || "";
+  if (!password) {
+    sessionCookie = "";
+    return sessionCookie;
+  }
+  try {
+    const res = await fetch(`${BASE}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const setCookie = res.headers.getSetCookie?.() ?? [];
+    sessionCookie =
+      res.ok && setCookie.length ? setCookie.map((c) => c.split(";")[0]).join("; ") : "";
+    if (!sessionCookie) log(`login: HTTP ${res.status} — continuing unauthenticated`);
+  } catch (err) {
+    log(`login failed: ${err.message}`);
+    sessionCookie = "";
+  }
+  return sessionCookie;
 }
 
 async function call(path, init = {}) {
@@ -87,6 +127,7 @@ async function call(path, init = {}) {
       "Content-Type": "application/json",
       ...(await getCliTokenHeader()),
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+      ...((await getSessionCookie()) ? { Cookie: await getSessionCookie() } : {}),
       ...(init.headers || {}),
     },
   });
