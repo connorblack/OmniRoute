@@ -1,0 +1,140 @@
+{
+  "_comment": [
+    "Declarative site config applied by scripts/bootstrap/apply-site-config.mjs.",
+    "Every value here was derived from measured behaviour on a live deployment,",
+    "not from defaults. See the per-key notes below."
+  ],
+  "settings": {
+    "resilienceSettings": {
+      "requestQueue": {
+        "autoEnableApiKeyProviders": true,
+        "requestsPerMinute": 35,
+        "minTimeBetweenRequestsMs": 1000,
+        "concurrentRequests": 8,
+        "maxWaitMs": 500000,
+        "maxQueueDepth": 0
+      },
+      "providerBreaker": {
+        "oauth": {
+          "failureThreshold": 8,
+          "degradationThreshold": 5,
+          "resetTimeoutMs": 60000
+        },
+        "apikey": {
+          "failureThreshold": 12,
+          "degradationThreshold": 7,
+          "resetTimeoutMs": 30000
+        }
+      },
+      "waitForCooldown": {
+        "enabled": true,
+        "maxRetries": 10,
+        "maxRetryWaitSec": 30,
+        "maxRetryWaitMs": 30000,
+        "budgetMs": 300000
+      },
+      "comboCooldownWait": {
+        "enabled": true,
+        "maxWaitMs": 15000,
+        "maxAttempts": 3,
+        "budgetMs": 20000
+      }
+    },
+    "comboDefaults": {
+      "strategy": "auto",
+      "maxRetries": 5,
+      "retryDelayMs": 2000,
+      "fallbackDelayMs": 0,
+      "targetTimeoutMs": 180000,
+      "handoffThreshold": 0.85,
+      "handoffModel": "",
+      "maxMessagesForSummary": 30,
+      "maxComboDepth": 3,
+      "trackMetrics": true,
+      "reasoningTokenBufferEnabled": false,
+      "zeroLatencyOptimizationsEnabled": false,
+      "resetAwareQuotaCacheTtlMs": 30000,
+      "resetAwareQuotaCacheMaxStaleMs": 0
+    },
+    "modelLockout": {
+      "enabled": true,
+      "errorCodes": [403, 404, 429, 502, 503, 504],
+      "baseCooldownMs": 120000,
+      "maxCooldownMs": 1800000,
+      "maxBackoffSteps": 10,
+      "useExponentialBackoff": true
+    },
+    "fallbackStrategy": "fill-first",
+    "localOnlyManageScopeBypassEnabled": true,
+    "localOnlyManageScopeBypassPrefixes": ["/api/mcp/"]
+  },
+  "payloadRules": {
+    "default": [
+      {
+        "models": [
+          {
+            "name": "MiniMax-M3"
+          },
+          {
+            "name": "MiniMax-M2.7"
+          },
+          {
+            "name": "MiniMax-M2.7-highspeed"
+          },
+          {
+            "name": "MiniMax-M2.5"
+          },
+          {
+            "name": "MiniMax-M2.5-highspeed"
+          },
+          {
+            "name": "MiniMax-M2.1"
+          },
+          {
+            "name": "MiniMax-M2.1-highspeed"
+          },
+          {
+            "name": "MiniMax-M2"
+          },
+          {
+            "name": "minimax/MiniMax-M3"
+          },
+          {
+            "name": "minimax/MiniMax-M2.7"
+          },
+          {
+            "name": "minimax/MiniMax-M2.7-highspeed"
+          }
+        ],
+        "params": {
+          "reasoning_split": true
+        }
+      }
+    ],
+    "override": [
+      {
+        "models": [
+          {
+            "name": "*",
+            "protocol": "ollama-cloud"
+          }
+        ],
+        "params": {
+          "reasoning_effort": "high"
+        }
+      }
+    ],
+    "filter": [
+      {
+        "models": [
+          {
+            "name": "*",
+            "protocol": "ollama-cloud"
+          }
+        ],
+        "params": ["reasoning"]
+      }
+    ],
+    "defaultRaw": []
+  }
+}
