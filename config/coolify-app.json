@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Coolify container-level manifest. Companion to config/site-config.json,",
+    "which carries the SQLite-side state applied by the post-deployment hook.",
+    "envKeys lists NAMES ONLY \u2014 values resolve from the ambient environment at",
+    "apply time, so this file is never a secret store."
+  ],
+  "application": {
+    "build_pack": "dockerfile",
+    "dockerfile_location": "/Dockerfile",
+    "base_directory": "/",
+    "ports_exposes": "20128,20132",
+    "ports_mappings": "20128:20128,20132:20132",
+    "health_check_enabled": true,
+    "health_check_path": "/",
+    "post_deployment_command": "node scripts/bootstrap/apply-site-config.mjs",
+    "post_deployment_command_container": "<app-uuid>"
+  },
+  "envKeys": [
+    "PORT",
+    "DATA_DIR",
+    "NODE_OPTIONS",
+    "OMNIROUTE_MEMORY_MB",
+    "TLS_FINGERPRINT_PROVIDERS",
+    "MODEL_SYNC_INTERVAL_HOURS",
+    "CURSOR_DATA_DIR",
+    "CURSOR_EXECUTION_MODE",
+    "PATH",
+    "LIVE_WS_HOST",
+    "LIVE_WS_ALLOWED_ORIGINS",
+    "NEXT_PUBLIC_LIVE_WS_PUBLIC_URL",
+    "BASE_URL",
+    "NEXT_PUBLIC_BASE_URL",
+    "REDIS_URL",
+    "OMNIROUTE_WS_BRIDGE_SECRET",
+    "API_KEY_SECRET",
+    "JWT_SECRET",
+    "STORAGE_ENCRYPTION_KEY",
+    "OMNIROUTE_AUTO_SYNC_CODEX_PROFILES",
+    "OMNIROUTE_AUTO_SYNC_CLAUDE_PROFILES"
+  ],
+  "storages": [
+    {
+      "name": "omniroute-data",
+      "mount_path": "/app/data"
+    },
+    {
+      "name": "cursor-agent-share",
+      "mount_path": "/home/ken/.local/share/cursor-agent",
+      "host_path": "/home/ken/.local/share/cursor-agent"
+    },
+    {
+      "name": "cursor-agent-bin",
+      "mount_path": "/home/ken/.local/bin",
+      "host_path": "/home/ken/.local/bin"
+    }
+  ]
+}
