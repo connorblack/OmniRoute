@@ -2,7 +2,8 @@
   "_comment": [
     "Declarative site config applied by scripts/bootstrap/apply-site-config.mjs.",
     "Every value here was derived from measured behaviour on a live deployment,",
-    "not from defaults. See the per-key notes below."
+    "not from defaults. See the per-key notes below.",
+    "waitForCooldown intentionally omits maxRetryWaitMs/budgetMs: they are derived on read and rejected by the strict write schema."
   ],
   "settings": {
     "resilienceSettings": {
@@ -29,9 +30,7 @@
       "waitForCooldown": {
         "enabled": true,
         "maxRetries": 10,
-        "maxRetryWaitSec": 30,
-        "maxRetryWaitMs": 30000,
-        "budgetMs": 300000
+        "maxRetryWaitSec": 30
       },
       "comboCooldownWait": {
         "enabled": true,

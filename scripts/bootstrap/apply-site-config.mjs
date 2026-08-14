@@ -165,27 +165,110 @@ function subsetMatches(actual, desired) {
   return Object.entries(desired).every(([k, v]) => subsetMatches(actual[k], v));
 }
 
+/**
+ * Sections that GET /api/settings surfaces but does NOT own.
+ *
+ * PATCH /api/settings answers 200 for these and persists nothing, so they must
+ * be routed to the endpoint that actually writes them. Discovered the hard way:
+ * a fresh instance reported "5 change(s)" while two of them silently no-opped.
+ */
+const SECTION_ROUTES = {
+  // Takes the sections bare. Note its schema is strict: derived read-only
+  // fields returned by GET (waitForCooldown.maxRetryWaitMs/budgetMs) are
+  // rejected on write, so site-config.json must not declare them.
+  resilienceSettings: { route: "/api/resilience", wrap: null },
+  // Expects the section WRAPPED. Sending it bare returns 400 "Nothing to
+  // update" — a 400 that reads like a validation error but actually means
+  // "none of these keys are mine".
+  comboDefaults: { route: "/api/settings/combo-defaults", wrap: "comboDefaults" },
+};
+
+/** GET shape mirrors the write shape, so unwrap before comparing. */
+function readSection(body, wrap) {
+  return wrap ? (body?.[wrap] ?? body) : body;
+}
+
+async function applySection(key, spec, value) {
+  const { route, wrap } = spec;
+  const { body: before } = await call(route);
+  if (subsetMatches(readSection(before, wrap), value)) {
+    skipped += 1;
+    log(`${key}: already correct`);
+    return;
+  }
+  log(`${key}: updating via ${route}`);
+  if (DRY_RUN) return;
+  const payload = wrap ? { [wrap]: value } : value;
+  const res = await call(route, { method: "PATCH", body: JSON.stringify(payload) });
+  if (!res.ok) {
+    throw new Error(
+      `${key} PATCH ${route} failed: HTTP ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`
+    );
+  }
+  const { body: after } = await call(route);
+  if (!subsetMatches(readSection(after, wrap), value)) {
+    throw new Error(`${key} did not persist via ${route} despite HTTP ${res.status}`);
+  }
+  changed += 1;
+}
+
 async function applySettings(desired) {
   if (!desired || !Object.keys(desired).length) return;
+
+  for (const [key, spec] of Object.entries(SECTION_ROUTES)) {
+    if (desired[key] === undefined) continue;
+    await applySection(key, spec, desired[key]);
+  }
+
   const { body: current } = await call("/api/settings");
   const diff = {};
   for (const [key, value] of Object.entries(desired)) {
+    if (SECTION_ROUTES[key]) continue; // handled above by its owning route
     if (subsetMatches(current?.[key], value)) continue;
     diff[key] = value;
   }
+  const plainKeys = Object.keys(desired).filter((k) => !SECTION_ROUTES[k]);
   if (!Object.keys(diff).length) {
-    skipped += Object.keys(desired).length;
-    log(`settings: already correct (${Object.keys(desired).length} keys)`);
+    skipped += plainKeys.length;
+    if (plainKeys.length) log(`settings: already correct (${plainKeys.length} keys)`);
     return;
   }
   log(`settings: updating ${Object.keys(diff).join(", ")}`);
   if (DRY_RUN) return;
+  await patchAndVerify(diff);
+}
+
+/**
+ * Write, then read back and confirm the value actually stuck.
+ *
+ * PATCH /api/settings answers 200 for keys it does not own — `comboDefaults`
+ * and `resilienceSettings` are served by that GET but written through their
+ * own routes — so a write can report success and change nothing. Trusting the
+ * status code made this script log "5 change(s)" against a fresh instance
+ * where two of them silently no-opped, which is precisely the
+ * looks-healthy-but-is-wrong outcome it exists to prevent.
+ */
+async function patchAndVerify(diff) {
   const res = await call("/api/settings", { method: "PATCH", body: JSON.stringify(diff) });
-  if (!res.ok)
+  if (!res.ok) {
     throw new Error(
       `settings PATCH failed: HTTP ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`
     );
-  changed += Object.keys(diff).length;
+  }
+
+  const { body: after } = await call("/api/settings");
+  const unpersisted = Object.entries(diff)
+    .filter(([key, value]) => !subsetMatches(after?.[key], value))
+    .map(([key]) => key);
+
+  changed += Object.keys(diff).length - unpersisted.length;
+  if (unpersisted.length) {
+    throw new Error(
+      `settings did not persist despite HTTP 200: ${unpersisted.join(", ")}. ` +
+        `These keys are readable via GET /api/settings but owned by another route — ` +
+        `remove them from site-config.json or apply them through their own endpoint.`
+    );
+  }
 }
 
 /**
