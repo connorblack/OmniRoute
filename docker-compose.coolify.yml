@@ -9,13 +9,19 @@
 #  minus the chatgpt-web-codex-browser sidecar, which only web-cookie
 #  ChatGPT/Codex providers need and this deployment does not run.
 #
-#  Container paths for the cursor Agent CLI mounts match the previous
-#  application-shaped deployment (/home/ken/...), so the existing
-#  CURSOR_DATA_DIR and PATH env values carry over unchanged.
+#  Written for COOLIFY'S compose dialect, not vanilla compose:
+#    - No container_name, no explicit volume `name:` — Coolify overrides
+#      container names to <service>-<uuid> and uuid-prefixes named volumes
+#      (verified: an explicit `name:` here was silently ignored).
+#    - Intra-stack DNS is by service name (redis:6379) on the project network.
+#    - ${VAR} resolves from the resource's synced env at deploy; an unsynced
+#      var becomes silently blank, so every ${VAR} below must exist in env.
 #
-#  Host ports are parameterized so a candidate stack can run beside the
-#  live gateway (e.g. OMNIROUTE_HOST_PORT=20230) and take over 20128 at
-#  cutover by changing env only — no compose edit, no rebuild.
+#  The bind-mount set mirrors the live application container EXACTLY
+#  (docker inspect, 2026-08-14): the CLI identity/auth state for codex,
+#  claude, cursor, and opencode lives on the host and is bound into the
+#  container. Omitting these yields a healthy-looking gateway whose
+#  CLI-synthesis providers are silently deauthed.
 #
 #  Operational config (secrets, provider toggles, NODE_OPTIONS) lives in
 #  Coolify's env manager, not here. Only topology-owned values are pinned.
@@ -26,7 +32,7 @@ services:
     image: docker.io/library/redis:8.6.5-alpine
     restart: unless-stopped
     # Not published to the host: the gateway reaches it as redis:6379 on the
-    # compose network. Publishing an unauthenticated Redis is how LAN-exposed
+    # stack network. Publishing an unauthenticated Redis is how LAN-exposed
     # instances happen (see the warning in upstream docker-compose.yml).
     volumes:
       - redis-data:/data
@@ -56,16 +62,30 @@ services:
       - LIVE_WS_PORT=20132
       - LIVE_WS_HOST=0.0.0.0
       - HOSTNAME=0.0.0.0
-      # In-network Redis replaces the dangling external hostname the previous
-      # deployment carried (omniroute-dragonfly — ENOTFOUND at runtime).
       - REDIS_URL=redis://redis:6379
     ports:
-      - "${OMNIROUTE_HOST_PORT:-20128}:20128"
-      - "${OMNIROUTE_WS_HOST_PORT:-20132}:20132"
+      # Parameterized so a candidate stack smokes beside the live gateway
+      # (e.g. 20230/20232) and takes over 20128/20132 at cutover by changing
+      # env only — no compose edit, no rebuild.
+      - "${OMNIROUTE_HOST_PORT}:20128"
+      - "${OMNIROUTE_WS_HOST_PORT}:20132"
     volumes:
       - omniroute-data:/app/data
-      # cursor Agent CLI from the host, read-only binary dir + rw data dir,
-      # at the same container paths the env (CURSOR_DATA_DIR, PATH) expects.
+      # CLIProxyAPI auth state (token store the gateway reads at
+      # /home/node/.cli-proxy-api — a named volume on the live app too).
+      - cliproxy-auth:/home/node/.cli-proxy-api
+      # ── Host CLI identity/auth mounts — exact mirror of the live app ──
+      # Container user is `node`; CLIs resolve $HOME=/home/node.
+      - /home/ken/.codex:/home/node/.codex
+      - /home/ken/.claude:/home/node/.claude
+      - /home/ken/.cursor:/home/node/.cursor
+      - /home/ken/.opencode:/home/node/.opencode
+      - /home/ken/.config/cursor:/home/node/.config/cursor
+      - /home/ken/.config/opencode:/home/node/.config/opencode
+      - /home/ken/.local/share/opencode:/home/node/.local/share/opencode
+      - /home/ken/.local/state:/home/node/.local/state
+      # cursor Agent CLI at its host path — CURSOR_DATA_DIR and PATH env
+      # point at /home/ken/..., so these keep their host-side paths.
       - /home/ken/.local/share/cursor-agent:/home/ken/.local/share/cursor-agent
       - /home/ken/.local/bin:/home/ken/.local/bin:ro
     healthcheck:
@@ -79,6 +99,5 @@ services:
 
 volumes:
   omniroute-data:
-    name: omniroute-data
   redis-data:
-    name: omniroute-redis-data
+  cliproxy-auth:
