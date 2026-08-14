@@ -54,11 +54,38 @@ let changed = 0;
 let skipped = 0;
 const log = (msg) => console.log(`[bootstrap] ${msg}`);
 
+/**
+ * Authenticate the way the CLI does.
+ *
+ * A fresh deployment has no API key yet, so a bearer token cannot be the
+ * primary path — bootstrap must work on an empty database. The management
+ * policy accepts a machine-derived CLI token when the request also comes from
+ * loopback, and the server recomputes that token in-process from the same
+ * machine id. Because this script runs inside the app container, the ids match
+ * and no secret has to be minted, stored, or injected.
+ *
+ * Reuses the CLI's own helper rather than reimplementing the derivation, so
+ * the two cannot drift apart.
+ */
+let cliTokenHeader = null;
+async function getCliTokenHeader() {
+  if (cliTokenHeader !== null) return cliTokenHeader;
+  try {
+    const mod = await import(join(REPO_ROOT, "bin", "cli", "utils", "cliToken.mjs"));
+    const token = await mod.getCliToken();
+    cliTokenHeader = token ? { [mod.CLI_TOKEN_HEADER]: token } : {};
+  } catch {
+    cliTokenHeader = {};
+  }
+  return cliTokenHeader;
+}
+
 async function call(path, init = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(await getCliTokenHeader()),
       ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
       ...(init.headers || {}),
     },
