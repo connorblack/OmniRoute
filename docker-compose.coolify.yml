@@ -1,0 +1,84 @@
+# ──────────────────────────────────────────────────────────────────────
+#  OmniRoute — Coolify compose (self-hosted gx10 deployment)
+# ──────────────────────────────────────────────────────────────────────
+#
+#  Why this file exists next to docker-compose.yml: Coolify's compose build
+#  pack cannot pass `--profile`, so the profile-based upstream file cannot
+#  express "exactly these services" to it. This file IS the selection —
+#  upstream's production shape (docker-compose.prod.yml: runner-cli + Redis)
+#  minus the chatgpt-web-codex-browser sidecar, which only web-cookie
+#  ChatGPT/Codex providers need and this deployment does not run.
+#
+#  Container paths for the cursor Agent CLI mounts match the previous
+#  application-shaped deployment (/home/ken/...), so the existing
+#  CURSOR_DATA_DIR and PATH env values carry over unchanged.
+#
+#  Host ports are parameterized so a candidate stack can run beside the
+#  live gateway (e.g. OMNIROUTE_HOST_PORT=20230) and take over 20128 at
+#  cutover by changing env only — no compose edit, no rebuild.
+#
+#  Operational config (secrets, provider toggles, NODE_OPTIONS) lives in
+#  Coolify's env manager, not here. Only topology-owned values are pinned.
+# ──────────────────────────────────────────────────────────────────────
+
+services:
+  redis:
+    image: docker.io/library/redis:8.6.5-alpine
+    restart: unless-stopped
+    # Not published to the host: the gateway reaches it as redis:6379 on the
+    # compose network. Publishing an unauthenticated Redis is how LAN-exposed
+    # instances happen (see the warning in upstream docker-compose.yml).
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  omniroute:
+    build:
+      context: .
+      # runner-cli to match both upstream's prod snapshot and the image the
+      # previous application-shaped deployment ran (default Dockerfile target).
+      target: runner-cli
+    restart: unless-stopped
+    stop_grace_period: 40s
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - DASHBOARD_PORT=20128
+      - LIVE_WS_PORT=20132
+      - LIVE_WS_HOST=0.0.0.0
+      - HOSTNAME=0.0.0.0
+      # In-network Redis replaces the dangling external hostname the previous
+      # deployment carried (omniroute-dragonfly — ENOTFOUND at runtime).
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "${OMNIROUTE_HOST_PORT:-20128}:20128"
+      - "${OMNIROUTE_WS_HOST_PORT:-20132}:20132"
+    volumes:
+      - omniroute-data:/app/data
+      # cursor Agent CLI from the host, read-only binary dir + rw data dir,
+      # at the same container paths the env (CURSOR_DATA_DIR, PATH) expects.
+      - /home/ken/.local/share/cursor-agent:/home/ken/.local/share/cursor-agent
+      - /home/ken/.local/bin:/home/ken/.local/bin:ro
+    healthcheck:
+      # Mirrors the image's own HEALTHCHECK (Dockerfile copies
+      # scripts/dev/healthcheck.mjs to /app/healthcheck.mjs).
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  omniroute-data:
+    name: omniroute-data
+  redis-data:
+    name: omniroute-redis-data
