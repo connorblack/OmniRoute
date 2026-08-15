@@ -151,12 +151,16 @@ const AGENT_DEFINITIONS: Omit<CliAgentInfo, "version" | "installed">[] = [
     protocol: "stdio",
   },
   {
+    // `cursor` is the Cursor IDE launcher, which has no ACP mode — probing it
+    // reported the agent installed when it was not. The ACP-capable binary is
+    // `cursor-agent` (`cursor-agent acp`), which OmniRoute drives through acpx;
+    // see open-sse/services/cursorAcp.ts.
     id: "cursor-cli",
-    name: "Cursor CLI",
-    binary: "cursor",
-    versionCommand: "cursor --version",
+    name: "Cursor Agent CLI",
+    binary: "cursor-agent",
+    versionCommand: "cursor-agent --version",
     providerAlias: "cursor",
-    spawnArgs: [],
+    spawnArgs: ["acp"],
     protocol: "stdio",
   },
   {

@@ -61,33 +61,6 @@ export async function validateAuggieProvider() {
   return { valid: true, error: null, unsupported: false, method: result.version };
 }
 
-// cursor-cli is a fully local, credential-less CLI passthrough — there is no API
-// key to check upstream. Live model discovery IS the validation: a non-empty
-// catalog proves the whole chain in one probe (acpx resolvable, cursor-agent
-// resolvable, and the agent authenticated), since the ACP handshake cannot
-// advertise models otherwise. It is also cheap — the discovery spawn reads the
-// list out of the `session/new` result and kills the child before any
-// generation, so validating costs no completion.
-export async function validateCursorCliProvider() {
-  const { getCursorCliModels } = await import("@omniroute/open-sse/services/cursorCliModels.ts");
-  const models = await getCursorCliModels({ forceRefresh: true });
-  if (models.length === 0) {
-    return {
-      valid: false,
-      error:
-        "Cursor Agent CLI not reachable. Install `acpx` and the Cursor agent CLI, then run " +
-        "`cursor-agent login` on this machine (check with `cursor-agent status`).",
-      unsupported: false,
-    };
-  }
-  return {
-    valid: true,
-    error: null,
-    unsupported: false,
-    method: `${models.length} models advertised`,
-  };
-}
-
 export async function validateQoderProvider({ apiKey, providerSpecificData }: any) {
   // Bifurcate validation: PAT tokens use Cosy auth against api1.qoder.sh;
   // regular API keys validate against dashscope (OpenAI-compatible endpoint).

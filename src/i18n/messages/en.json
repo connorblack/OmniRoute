@@ -6335,7 +6335,9 @@
     "savedModelEndpointSettings": "Saved model endpoint settings",
     "searchByModelAria": "Search by model",
     "selectSupportedEndpoint": "Select at least one supported endpoint",
-    "antigravityClientProfileHarness": "Harness / CLI"
+    "antigravityClientProfileHarness": "Harness / CLI",
+    "cursorAcpTransportLabel": "Route via local agent CLI (ACP)",
+    "cursorAcpTransportDescription": "Drive the locally-installed Cursor agent over ACP instead of api2.cursor.sh. Requires acpx and cursor-agent on the host, authenticated with `cursor-agent login`. Tools, filesystem and terminal access are disabled, and only the model parameterisations the agent advertises can be selected."
   },
   "settings": {
     "title": "Settings",

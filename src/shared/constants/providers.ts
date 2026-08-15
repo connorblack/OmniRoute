@@ -38,9 +38,6 @@ export const FREE_APIKEY_PROVIDER_IDS = new Set([
   // accepts an optional connection row for display/priority/testStatus tracking —
   // no apiKey is ever required or sent upstream.
   "auggie",
-  // cursor-cli is the same shape: a local CLI passthrough driven over ACP, with
-  // auth held by `cursor-agent login` outside OmniRoute.
-  "cursor-cli",
 ]);
 
 export function supportsApiKeyOnFreeProvider(providerId: unknown): boolean {

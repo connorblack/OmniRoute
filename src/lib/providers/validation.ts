@@ -108,7 +108,6 @@ import {
 import {
   validateV0VercelProvider,
   validateAuggieProvider,
-  validateCursorCliProvider,
   validateQoderProvider,
   validateKiroProvider,
   validateGitlabProvider,
@@ -182,7 +181,6 @@ export async function validateProviderApiKey({ provider, apiKey, providerSpecifi
     // for parity with the "jules" cloud-agent entry above — see #6142.
     devin: validateDevinCloudAgentProvider,
     auggie: validateAuggieProvider,
-    "cursor-cli": validateCursorCliProvider,
     qoder: validateQoderProvider,
     kiro: validateKiroProvider,
     "command-code": validateCommandCodeProvider,

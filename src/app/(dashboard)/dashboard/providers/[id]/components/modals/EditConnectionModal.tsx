@@ -146,6 +146,7 @@ export default function EditConnectionModal({
     passthroughModels: connectionProviderSpecificData?.passthroughModels === true,
     disableCooling: connectionProviderSpecificData?.disableCooling === true,
     importFreeModelsOnly: connectionProviderSpecificData?.importFreeModelsOnly === true,
+    cursorTransport: stringField(connectionProviderSpecificData?.transport),
     tunnelId: stringField(connectionProviderSpecificData?.tunnelId),
     runtimeKey: "",
     connectorName: stringField(connectionProviderSpecificData?.connectorName) || "OmniRoute Codex",
@@ -360,6 +361,7 @@ export default function EditConnectionModal({
         passthroughModels: connection?.providerSpecificData?.passthroughModels === true,
         disableCooling: connection?.providerSpecificData?.disableCooling === true,
         importFreeModelsOnly: connection?.providerSpecificData?.importFreeModelsOnly === true,
+        cursorTransport: stringField(connection.providerSpecificData?.transport),
         tunnelId: stringField(connection.providerSpecificData?.tunnelId),
         runtimeKey: "",
         connectorName:
@@ -1073,6 +1075,17 @@ export default function EditConnectionModal({
                   label={t("perModelQuotaLabel")}
                   description={t("perModelQuotaDescription")}
                 />
+                {(provider === "cursor" || provider === "cu") && (
+                  <Toggle
+                    size="sm"
+                    checked={formData.cursorTransport === "acp"}
+                    onChange={(checked) =>
+                      setFormData({ ...formData, cursorTransport: checked ? "acp" : "" })
+                    }
+                    label={t("cursorAcpTransportLabel")}
+                    description={t("cursorAcpTransportDescription")}
+                  />
+                )}
                 {provider === "bailian-coding-plan" && (
                   <Input
                     label={t("consoleApiKeyOracleLabel")}

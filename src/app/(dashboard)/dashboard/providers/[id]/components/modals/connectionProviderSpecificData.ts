@@ -36,6 +36,7 @@ type FormData = QuotaScrapingFieldValues &
     validationModelId?: string;
     tunnelId: string;
     connectorName: string;
+    cursorTransport?: string;
     runtimeKey?: string;
   };
 type ProviderSpecificData = Record<string, unknown>;
@@ -44,6 +45,17 @@ type ProviderSpecificData = Record<string, unknown>;
 // reuses the same generic field for its New-API System Access Token, paired with
 // newApiUserId (the New-Api-User header value). See agentrouterQuotaFetcher.ts.
 const CONSOLE_API_KEY_PROVIDERS = new Set(["bailian-coding-plan", "agentrouter"]);
+
+// cursor can route over ACP (local agent CLI) instead of api2.cursor.sh. Stored
+// per connection so an operator can run both side by side on one provider —
+// see docs/providers/CURSOR-ACP.md. Only `acp` is persisted; anything else
+// leaves the key unset, keeping the HTTP path as the untouched default.
+const CURSOR_TRANSPORT_PROVIDERS = new Set(["cursor", "cu"]);
+
+function cursorTransportValue(provider: string | undefined, raw: string | undefined) {
+  if (!CURSOR_TRANSPORT_PROVIDERS.has(provider ?? "")) return undefined;
+  return (raw || "").trim().toLowerCase() === "acp" ? "acp" : undefined;
+}
 
 export function buildAddProviderSpecificData(options: {
   provider?: string;
@@ -111,6 +123,8 @@ export function buildAddProviderSpecificData(options: {
     if (formData.tunnelId.trim()) data.tunnelId = formData.tunnelId.trim();
     if (formData.connectorName.trim()) data.connectorName = formData.connectorName.trim();
   }
+  const transport = cursorTransportValue(provider, formData.cursorTransport);
+  if (transport) data.transport = transport;
   return Object.keys(data).length > 0 ? data : undefined;
 }
 
@@ -184,5 +198,8 @@ export function assignEditApiKeyProviderSpecificData(options: {
   if (o.provider === "chatgpt-web-codex") {
     o.target.tunnelId = o.formData.tunnelId.trim() || undefined;
     o.target.connectorName = o.formData.connectorName.trim() || undefined;
+  }
+  if (CURSOR_TRANSPORT_PROVIDERS.has(o.provider)) {
+    o.target.transport = cursorTransportValue(o.provider, o.formData.cursorTransport);
   }
 }

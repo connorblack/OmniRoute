@@ -11,6 +11,8 @@ declare const EdgeRuntime: string | undefined;
  */
 
 import { BaseExecutor, mergeUpstreamExtraHeaders } from "./base.ts";
+import { executeCursorAcp } from "../services/cursorAcpTransport.ts";
+import type { ProviderCredentials } from "./base.ts";
 import { PROVIDERS, HTTP_STATUS } from "../config/constants.ts";
 import {
   buildAgentRequestBody,
@@ -692,6 +694,19 @@ export function processFrame(
   }
 }
 
+/**
+ * Whether this connection routes over ACP instead of api2.cursor.sh.
+ *
+ * Opt-in per connection via `providerSpecificData.transport = "acp"`, so an
+ * operator can run an HTTP connection and an ACP connection side by side on the
+ * same provider — the HTTP path carries arbitrary effort/reasoning parameters,
+ * while ACP is limited to the parameterisations the local agent advertises.
+ */
+export function isCursorAcpTransport(credentials: ProviderCredentials | null | undefined): boolean {
+  const transport = credentials?.providerSpecificData?.transport;
+  return typeof transport === "string" && transport.trim().toLowerCase() === "acp";
+}
+
 export class CursorExecutor extends BaseExecutor {
   constructor() {
     super("cursor", PROVIDERS.cursor);
@@ -1165,6 +1180,19 @@ export class CursorExecutor extends BaseExecutor {
   }
 
   async execute({ model, body, stream, credentials, signal, log, upstreamExtraHeaders }) {
+    // ACP transport (opt-in, per connection). src/lib/acp/registry.ts frames ACP
+    // as "an alternative to the HTTP proxy method" for an EXISTING provider —
+    // same identity, same credential origin, different wire. Chosen here rather
+    // than by a second provider id so saved connections, combos and the synced
+    // catalog keep working.
+    //
+    // No bearer is injected: cursor-agent authenticates from its own auth.json,
+    // which is the same file tokenExtractor.ts::tryAgentAuth() imports into this
+    // connection.
+    if (isCursorAcpTransport(credentials)) {
+      return executeCursorAcp({ model, body, stream, signal, log });
+    }
+
     const url = this.buildUrl();
     const headers = this.buildHeaders(credentials);
     mergeUpstreamExtraHeaders(headers, upstreamExtraHeaders);
@@ -1239,8 +1267,10 @@ export class CursorExecutor extends BaseExecutor {
     if (isToolFollowUp) {
       session = cursorSessionManager.acquire(conversationId);
       // #9029: content-based session match when client lacks conversation_id.
-      if (!session && !body.conversation_id) session = cursorSessionManager.findByToolCallIds(
-        messages.filter(m => m.role === "tool" && m.tool_call_id).map(m => m.tool_call_id!));
+      if (!session && !body.conversation_id)
+        session = cursorSessionManager.findByToolCallIds(
+          messages.filter((m) => m.role === "tool" && m.tool_call_id).map((m) => m.tool_call_id!)
+        );
     }
 
     if (session) {

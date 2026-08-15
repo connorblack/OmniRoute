@@ -22,17 +22,12 @@ export function providerUsesCuratedModelsOnly(providerId: string): boolean {
  * static registry for dashboard / `/v1/models` / Test All listing. Static rows
  * remain offline fallback only when synced is empty.
  *
- * Cursor family only — other authoritative live-catalog providers keep
+ * Cursor-only for now — other authoritative live-catalog providers keep
  * coverage-style static preservation (e.g. command-code uncovered static ids).
- *
- * `cursor-cli` belongs here for a stronger reason than `cursor` does: its
- * registry entry ships an intentionally EMPTY model list, because the routable
- * set is whatever the local agent advertises over ACP for that account. There
- * is no static catalog for a stale row to survive in.
  */
 export function providerUsesExclusiveSyncedListing(providerId: string): boolean {
   const id = providerId.trim().toLowerCase();
-  return id === "cursor" || id === "cu" || id === "cursor-cli" || id === "ccli";
+  return id === "cursor" || id === "cu";
 }
 
 /**
