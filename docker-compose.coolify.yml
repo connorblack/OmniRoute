@@ -51,6 +51,11 @@ services:
       target: runner-cli
     restart: unless-stopped
     stop_grace_period: 40s
+    # The container runs as `node` (uid 1000); the mounted docker socket is
+    # root:docker. 988 is gx10's docker gid (`getent group docker` on the
+    # host) — without it every sandbox spawn dies on a socket permission.
+    group_add:
+      - "988"
     depends_on:
       redis:
         condition: service_healthy
