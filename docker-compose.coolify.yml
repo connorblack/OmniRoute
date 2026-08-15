@@ -13,7 +13,7 @@
 #    - No container_name, no explicit volume `name:` — Coolify overrides
 #      container names to <service>-<uuid> and uuid-prefixes named volumes
 #      (verified: an explicit `name:` here was silently ignored).
-#    - Intra-stack DNS is by service name (dragonfly:6379) on the project network.
+#    - Intra-stack DNS is by service name (redis:6379) on the project network.
 #    - ${VAR} resolves from the resource's synced env at deploy; an unsynced
 #      var becomes silently blank, so every ${VAR} below must exist in env.
 #
@@ -28,19 +28,19 @@
 # ──────────────────────────────────────────────────────────────────────
 
 services:
-  # Dragonfly, not Redis — the house default (redis-compatible, far better
-  # memory efficiency/throughput). Flags mirror the proven gx10 dragonfly
-  # deployment (v1.40.1); no requirepass because this instance is unpublished
-  # and reachable only on the stack network. cache_mode evicts LRU under
-  # memory pressure, which for rate-limiter keys degrades to "limit resets" —
-  # acceptable by design.
-  dragonfly:
+  # Dragonfly as the drop-in on the `redis:` slot — the house pattern
+  # (see sellie-workspace/deploy/{firecrawl,inngest}): the service keeps its
+  # redis name and interface, only the image changes, so nothing downstream
+  # renames. Flags mirror the fleet's proven dragonfly config. cache_mode
+  # evicts LRU under memory pressure, which for rate-limiter keys degrades
+  # to a limit reset — acceptable by design. Unpublished, stack-network-only.
+  redis:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.40.1
     restart: unless-stopped
     ulimits:
       memlock: -1
     volumes:
-      - dragonfly-data:/data
+      - redis-data:/data
     command:
       - "--bind=0.0.0.0"
       - "--logtostderr"
@@ -73,7 +73,7 @@ services:
     group_add:
       - "988"
     depends_on:
-      dragonfly:
+      redis:
         condition: service_healthy
     environment:
       - NODE_ENV=production
@@ -83,9 +83,7 @@ services:
       - LIVE_WS_PORT=20132
       - LIVE_WS_HOST=0.0.0.0
       - HOSTNAME=0.0.0.0
-      # redis:// scheme, dragonfly host — Dragonfly speaks the redis wire
-      # protocol, so the app-side URL scheme stays redis://.
-      - REDIS_URL=redis://dragonfly:6379
+      - REDIS_URL=redis://redis:6379
     ports:
       # Parameterized so a candidate stack smokes beside the live gateway
       # (e.g. 20230/20232) and takes over 20128/20132 at cutover by changing
@@ -127,5 +125,5 @@ services:
 
 volumes:
   omniroute-data:
-  dragonfly-data:
+  redis-data:
   cliproxy-auth:
