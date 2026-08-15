@@ -157,6 +157,29 @@ export const NOAUTH_PROVIDERS = {
       text: "Augment (Auggie CLI) requires the `auggie` binary installed and authenticated locally (`auggie login`). OmniRoute spawns it as a subprocess and never sees or stores your Augment credentials.",
     },
   },
+  "cursor-cli": {
+    id: "cursor-cli",
+    alias: "ccli",
+    name: "Cursor (Agent CLI)",
+    icon: "terminal",
+    color: "#000000",
+    textIcon: "CC",
+    website: "https://cursor.com/cli",
+    noAuth: true,
+    hasFree: false,
+    // The routable catalog is whatever the local agent advertises over ACP for
+    // that account, discovered live — the registry entry ships no static models.
+    passthroughModels: true,
+    serviceKinds: ["llm"],
+    isLocalCli: true,
+    freeNote:
+      "Local passthrough — drives the Cursor agent CLI (`cursor-agent acp`) via `acpx` on this machine. Auth is handled by `cursor-agent login`, not OmniRoute.",
+    authHint:
+      "No API key stored by OmniRoute. Install `acpx` and the Cursor agent CLI and run `cursor-agent login` on this machine, then OmniRoute spawns it locally for each request.",
+    notice: {
+      text: "Cursor (Agent CLI) requires the `cursor-agent` binary and `acpx`, authenticated locally (`cursor-agent login`). OmniRoute spawns them as a subprocess with tools, filesystem and terminal access disabled, and never sees or stores your Cursor credentials. Models are discovered live from the agent, so use Import Models after connecting.",
+    },
+  },
   aihorde: {
     id: "aihorde",
     alias: "horde",
