@@ -66,6 +66,7 @@ import { mistralProvider } from "./registry/mistral/index.ts";
 import { togetherProvider } from "./registry/together/index.ts";
 import { cohereProvider } from "./registry/cohere/index.ts";
 import { cursorProvider } from "./registry/cursor/index.ts";
+import { cursor_cliProvider } from "./registry/cursor-cli/index.ts";
 import { volcengineProvider } from "./registry/volcengine/index.ts";
 import { hackclubProvider } from "./registry/hackclub/index.ts";
 import { freetheaiProvider } from "./registry/freetheai/index.ts";
@@ -324,6 +325,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   together: togetherProvider,
   cohere: cohereProvider,
   cursor: cursorProvider,
+  "cursor-cli": cursor_cliProvider,
   volcengine: volcengineProvider,
   hackclub: hackclubProvider,
   freetheai: freetheaiProvider,

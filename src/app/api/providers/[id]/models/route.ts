@@ -28,6 +28,7 @@ import {
 } from "@/shared/network/outboundUrlGuardPolicy";
 import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/error";
 import { getStaticQoderModels } from "@omniroute/open-sse/services/qoderCli.ts";
+import { getCursorCliModels } from "@omniroute/open-sse/services/cursorCliModels.ts";
 import { deriveConfigFromRegistryModelsUrl } from "./discoveryConfig";
 import { resolveZedModels } from "@omniroute/open-sse/shared/zedAuth.ts";
 import {
@@ -1365,6 +1366,51 @@ export async function GET(
         if (fallback) return fallback;
         return NextResponse.json(
           { error: `Failed to fetch Cursor models: ${message}` },
+          { status: 502 }
+        );
+      }
+    }
+
+    if (provider === "cursor-cli" || provider === "ccli") {
+      const cachedResponse = maybeReturnCachedDiscovery();
+      if (cachedResponse) return cachedResponse;
+
+      const autoFetchDisabledResponse = maybeReturnAutoFetchDisabled();
+      if (autoFetchDisabledResponse) return autoFetchDisabledResponse;
+
+      // The cursor-cli registry entry ships no static models on purpose, so
+      // there is no offline catalog to fall back to — the ACP handshake is the
+      // only source. Note this deliberately does NOT reuse the `cursor`
+      // branch's `cursor-agent --list-models`: that prints suffix-form ids
+      // (`claude-sonnet-5-thinking-high`) which acpx cannot route, whereas ACP
+      // advertises the bracket-form ids this provider actually executes.
+      try {
+        const models = (await getCursorCliModels({ forceRefresh: true })).map((m) => ({
+          id: m.id,
+          name: m.name,
+          owned_by: "cursor" as const,
+        }));
+        if (models.length === 0) {
+          return NextResponse.json(
+            {
+              error:
+                "Cursor CLI discovery returned no models. Check that cursor-agent is installed " +
+                "and authenticated (`cursor-agent status`) and that acpx is on PATH.",
+            },
+            { status: 502 }
+          );
+        }
+        return buildApiDiscoveryResponse(models);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.log("[models] cursor-cli discovery failed:", message);
+        const fallback = buildDiscoveryFallbackResponse({
+          cacheWarning: `cursor-cli unavailable (${message}) — using cached catalog`,
+          localWarning: `cursor-cli unavailable (${message}) — using local catalog`,
+        });
+        if (fallback) return fallback;
+        return NextResponse.json(
+          { error: `Failed to fetch Cursor CLI models: ${message}` },
           { status: 502 }
         );
       }

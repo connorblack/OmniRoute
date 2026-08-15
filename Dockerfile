@@ -209,6 +209,22 @@ ENV OMNIROUTE_MIGRATIONS_DIR=/app/migrations
 # it explicitly. The HEALTHCHECK CMD references it as `node healthcheck.mjs`.
 COPY --from=builder /app/scripts/dev/healthcheck.mjs ./healthcheck.mjs
 
+# acpx — the ACP (Agent Client Protocol) client the `cursor-cli` provider
+# spawns (open-sse/executors/cursor-cli.ts). It installs to /usr/local/bin,
+# which is on the deployed container's PATH.
+#
+# In runner-base rather than runner-cli so every target inherits it. The gx10
+# Coolify stack builds runner-cli and bind-mounts the Cursor agent + its auth
+# from the host, but acpx is NOT present on that host, so it has to come from
+# the image — it is the only piece of this provider the deployment was missing.
+#
+# Deliberately not paired with an npm install of the Cursor agent: the package
+# published as `cursor-agent` on npm is NOT Cursor's CLI (the genuine build is
+# versioned like 2026.07.23-e383d2b and ships via cursor.com's installer). The
+# agent binary comes from the host bind-mount.
+RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
+  npm install -g --no-audit --no-fund acpx@0.13.0
+
 # Hand /app over to the baked-in `node` non-root user (UID/GID 1000) so the
 # runtime process never holds root privileges. The chown happens after all
 # COPYs so it covers files originally owned by root in the builder stage.
