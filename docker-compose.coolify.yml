@@ -88,6 +88,11 @@ services:
       # point at /home/ken/..., so these keep their host-side paths.
       - /home/ken/.local/share/cursor-agent:/home/ken/.local/share/cursor-agent
       - /home/ken/.local/bin:/home/ken/.local/bin:ro
+      # Skills sandbox (docker-out-of-docker): the gateway spawns per-skill
+      # containers via the host engine — runner-cli ships docker.io for this
+      # (same pattern as upstream's `cli` profile). Image + allowlist come
+      # from SKILLS_SANDBOX_* env in Coolify's env manager.
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       # Mirrors the image's own HEALTHCHECK (Dockerfile copies
       # scripts/dev/healthcheck.mjs to /app/healthcheck.mjs).

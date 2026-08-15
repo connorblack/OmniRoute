@@ -57,8 +57,14 @@ const PROVIDER_ALIAS = {
 /** Providers that are tools, not LLM vendors — absence from a registry is correct. */
 const NON_LLM = new Set(["jina-ai", "brave-search", "exa-search", "ollama-search", "elevenlabs"]);
 
-const cfg = JSON.parse(readFileSync(`${homedir()}/.omniroute/config.json`, "utf8"));
-const TOKEN = cfg.contexts[cfg.currentContext].accessToken;
+// Token: CLI config on a workstation, env inside the deployed container
+// (where no ~/.omniroute exists — scheduled tasks run as the app user).
+const TOKEN = (() => {
+  const fromEnv = process.env.OMNIROUTE_BOOTSTRAP_TOKEN || process.env.OMNIROUTE_TOKEN;
+  if (fromEnv) return fromEnv;
+  const cfg = JSON.parse(readFileSync(`${homedir()}/.omniroute/config.json`, "utf8"));
+  return cfg.contexts[cfg.currentContext].accessToken;
+})();
 
 async function api(path, init = {}) {
   const res = await fetch(`${BASE}${path}`, {
