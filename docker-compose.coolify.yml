@@ -13,7 +13,7 @@
 #    - No container_name, no explicit volume `name:` — Coolify overrides
 #      container names to <service>-<uuid> and uuid-prefixes named volumes
 #      (verified: an explicit `name:` here was silently ignored).
-#    - Intra-stack DNS is by service name (redis:6379) on the project network.
+#    - Intra-stack DNS is by service name (dragonfly:6379) on the project network.
 #    - ${VAR} resolves from the resource's synced env at deploy; an unsynced
 #      var becomes silently blank, so every ${VAR} below must exist in env.
 #
@@ -28,17 +28,33 @@
 # ──────────────────────────────────────────────────────────────────────
 
 services:
-  redis:
-    image: docker.io/library/redis:8.6.5-alpine
+  # Dragonfly, not Redis — the house default (redis-compatible, far better
+  # memory efficiency/throughput). Flags mirror the proven gx10 dragonfly
+  # deployment (v1.40.1); no requirepass because this instance is unpublished
+  # and reachable only on the stack network. cache_mode evicts LRU under
+  # memory pressure, which for rate-limiter keys degrades to "limit resets" —
+  # acceptable by design.
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.40.1
     restart: unless-stopped
-    # Not published to the host: the gateway reaches it as redis:6379 on the
-    # stack network. Publishing an unauthenticated Redis is how LAN-exposed
-    # instances happen (see the warning in upstream docker-compose.yml).
+    ulimits:
+      memlock: -1
     volumes:
-      - redis-data:/data
-    command: redis-server --save 60 1 --loglevel warning
+      - dragonfly-data:/data
+    command:
+      - "--bind=0.0.0.0"
+      - "--logtostderr"
+      - "--port=6379"
+      - "--maxmemory=1536MiB"
+      - "--proactor_threads=2"
+      - "--cache_mode=true"
+      - "--dir=/data"
+      - "--dbfilename=dump"
+      - "--snapshot_cron=*/5 * * * *"
+      - "--primary_port_http_enabled=false"
+      - "--version_check=false"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning ping | grep -qx PONG"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -57,7 +73,7 @@ services:
     group_add:
       - "988"
     depends_on:
-      redis:
+      dragonfly:
         condition: service_healthy
     environment:
       - NODE_ENV=production
@@ -67,7 +83,9 @@ services:
       - LIVE_WS_PORT=20132
       - LIVE_WS_HOST=0.0.0.0
       - HOSTNAME=0.0.0.0
-      - REDIS_URL=redis://redis:6379
+      # redis:// scheme, dragonfly host — Dragonfly speaks the redis wire
+      # protocol, so the app-side URL scheme stays redis://.
+      - REDIS_URL=redis://dragonfly:6379
     ports:
       # Parameterized so a candidate stack smokes beside the live gateway
       # (e.g. 20230/20232) and takes over 20128/20132 at cutover by changing
@@ -109,5 +127,5 @@ services:
 
 volumes:
   omniroute-data:
-  redis-data:
+  dragonfly-data:
   cliproxy-auth:
