@@ -28,12 +28,17 @@
 # ──────────────────────────────────────────────────────────────────────
 
 services:
-  # Dragonfly as the drop-in on the `redis:` slot — the house pattern
-  # (see sellie-workspace/deploy/{firecrawl,inngest}): the service keeps its
-  # redis name and interface, only the image changes, so nothing downstream
-  # renames. Flags mirror the fleet's proven dragonfly config. cache_mode
-  # evicts LRU under memory pressure, which for rate-limiter keys degrades
-  # to a limit reset — acceptable by design. Unpublished, stack-network-only.
+  # Dragonfly as the drop-in on the `redis:` slot, matching the known-good
+  # house defs (sellie-workspace/deploy/inngest, firecrawl): redis-named
+  # service and interface, dragonfly image, DEFAULT flags — the tuned flag
+  # set on the shared fleet instance is multi-tenant config and does not
+  # belong on a stack-internal rate limiter. Version pinned per the
+  # _service-template convention. Unpublished: unlike the house defs (which
+  # serve external consumers on 6379), this one is stack-network-only.
+  #
+  # If this volume ever held actual Redis data, delete its dump.rdb before
+  # the swap: Dragonfly cannot load Redis 8 RDB (v13) snapshots and will
+  # crash-loop, taking the health-gated gateway down with it (hit 2026-08-15).
   redis:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.40.1
     restart: unless-stopped
@@ -41,21 +46,9 @@ services:
       memlock: -1
     volumes:
       - redis-data:/data
-    command:
-      - "--bind=0.0.0.0"
-      - "--logtostderr"
-      - "--port=6379"
-      - "--maxmemory=1536MiB"
-      - "--proactor_threads=2"
-      - "--cache_mode=true"
-      - "--dir=/data"
-      - "--dbfilename=dump"
-      - "--snapshot_cron=*/5 * * * *"
-      - "--primary_port_http_enabled=false"
-      - "--version_check=false"
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --no-auth-warning ping | grep -qx PONG"]
-      interval: 10s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
       timeout: 5s
       retries: 3
 
