@@ -59,6 +59,13 @@ RUN set -eux; \
 # ── Builder ────────────────────────────────────────────────────────────────
 FROM base AS builder
 
+# tls-client-node@0.2.0 downloads tls-client-<platform>-<arch>-<version>.<ext> from
+# bogdanfinn/tls-client releases. v1.16.0 renamed every asset to the tls-client-xgo-*
+# layout, so resolving `latest` requests a name that no longer exists. Renaming the
+# download would break dist/binary.js, which scans bin/ for the old prefix; pin instead
+# to the last release publishing that layout.
+ARG TLS_CLIENT_VERSION=1.15.0
+
 # Build tools for native module compilation
 # apt-get update needed here because base's rm -rf clears the shared cache
 RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
@@ -115,7 +122,7 @@ RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   && node -e "require('better-sqlite3')(':memory:').close()" \
   && node node_modules/tls-client-node/scripts/postinstall.js \
   && (test -n "$(find node_modules/tls-client-node/bin -mindepth 1 -print -quit 2>/dev/null)" \
-      || (echo "tls-client-node native binary missing after postinstall — GitHub API fetch likely rate-limited or failed (#7802)" >&2 && exit 1))
+      || (echo "tls-client-node native binary missing after postinstall — GitHub API fetch failed, or tls-client $TLS_CLIENT_VERSION publishes no tls-client-<platform>-<arch>-<version> asset (#7802)" >&2 && exit 1))
 
 # Build with Turbopack (stable in Next 16, the repo default). The v3.8.27-era
 # TurbopackInternalError panic ("entered unreachable code: there must be a path to a
