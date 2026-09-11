@@ -29,7 +29,9 @@ COPY scripts/build/ ./scripts/build/
 COPY scripts/dev/sync-env.mjs ./scripts/dev/sync-env.mjs
 
 # Fast Bun native package install
-RUN bun install --include=optional --quiet
+RUN bun install --linker hoisted --include=optional --quiet \
+  && cd node_modules/bun \
+  && node install.js
 
 # Fail the build if wreq-js cannot resolve its current platform binding.
 RUN bun -e "const wreq = require('wreq-js'); if (typeof wreq.createTransport !== 'function') process.exit(1)"
