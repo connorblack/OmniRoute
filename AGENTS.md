@@ -1,5 +1,8 @@
 # OmniRoute agent guide
 
+> **gx10 deploy checkout.** On gx10, `/home/ken/github/OmniRoute` is the canonical OmniRoute checkout. Its root tracks the upstream default branch, and every other branch lives in `.worktrees/<branch>`, which overrides the `.claude/worktrees/` rule below.
+> Coolify Service `hivf559vdhpez2itf2nsxxrf` builds from `.worktrees/deploy/v3.8.51-gx10-service`. Coolify owns that Service's compose, domains, and links. Change them only through Coolify, never with host `ports` or a compose copy on disk.
+
 > **Single source of truth.** This file holds ALL project rules, conventions, architecture notes
 > and Hard Rules for every AI assistant working this repository (Claude Code, Gemini, Codex,
 > Copilot, and any other agent). `CLAUDE.md` and `GEMINI.md` only add assistant-specific deltas
