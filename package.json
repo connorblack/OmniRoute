@@ -346,6 +346,7 @@
     "react-reconciler": "^0.33.0",
     "react18-json-view": "0.2.10",
     "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
     "safe-regex": "^2.1.1",
     "selfsigned": "^5.5.0",
     "sharp": "^0.35.4",
@@ -501,15 +502,8 @@
     },
     "socket.io-parser": "^4.2.7",
     "tar": "^7.5.21",
-    "libxmljs2": {
-      "minimatch": {
-        "brace-expansion": "^2.1.4"
-      }
-    },
-    "rimraf": {
-      "minimatch": {
-        "brace-expansion": "^2.1.4"
-      }
+    "minimatch@^9": {
+      "brace-expansion": "^2.1.4"
     },
     "@apidevtools/json-schema-ref-parser": {
       "js-yaml": "^4.3.1"
@@ -527,5 +521,13 @@
     "monaco-editor": {
       "dompurify": "^3.4.14"
     }
-  }
+  },
+  "trustedDependencies": [
+    "@parcel/watcher",
+    "@playwright/browser-chromium",
+    "@swc/core",
+    "onnxruntime-node",
+    "protobufjs",
+    "unrs-resolver"
+  ]
 }
