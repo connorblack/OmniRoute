@@ -341,7 +341,7 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,targe
 RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-npm-cache,target=/root/.npm \
   npm config set allow-scripts=@anthropic-ai/claude-code,droid,openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs --location=user \
   && npm install -g --no-audit --no-fund \
-    @openai/codex@0.153.2 \
+    @openai/codex@0.153.4 \
     @anthropic-ai/claude-code@2.1.260 \
     droid@0.212.0 \
     openclaw@2026.9.1

@@ -68,7 +68,12 @@ import {
   type CatalogEnrichmentSnapshot,
 } from "@/lib/modelMetadataRegistry";
 import { createModelCapabilityResolutionSnapshot } from "@/lib/modelCapabilityResolutionSnapshot";
-import { getModelsDevPricing, getSyncedCapability } from "@/lib/modelsDevSync";
+import {
+  getModelsDevPricing,
+  getSyncedCapability,
+  upsertSyncedCapabilities,
+} from "@/lib/modelsDevSync";
+import type { ModelCapabilityEntry } from "@/lib/modelsDevSync";
 import { getModelSpec } from "@/shared/constants/modelSpecs";
 import { classifyModelSupportedEndpoints } from "@/shared/constants/modelSupportedEndpoints";
 import { getModelsCatalogPrefixMode } from "@/shared/utils/featureFlags";
@@ -92,7 +97,7 @@ import {
   type ComboTargetCatalogMetadata,
   isPositiveFiniteNumber,
   parseJsonStringArray,
-  intersectStringArrays,
+  intersectKnownStringArrays,
   minKnownNumber,
   maybeOmitCatalogModelName,
   getThinkingCapabilityFields,
@@ -106,6 +111,7 @@ import {
   getOpenRouterModelType,
   isOpenRouterFreeModel,
   getOpenRouterDisplayName,
+  openRouterCapabilityEntry,
 } from "./catalogOpenrouter";
 import { getVisionCapabilityFields, getCustomVisionCapabilityFields } from "./catalogVision";
 import {
@@ -122,7 +128,7 @@ import {
 } from "./catalogRequest";
 import { incrementCcDiscoveryHitCount } from "@/lib/db/ccDiscoveryMetrics";
 import { isUnifiedChatSourceModelSelectable } from "./catalogModelPolicy";
-import { isFreeModel } from "@/shared/utils/freeModels";
+import { decideHidePaid } from "./catalogPaidFilter";
 import { isModelExposureAllowed } from "@/shared/utils/modelExposureList";
 import { isCodexDiscoveryModelExcluded } from "@/shared/services/codexDiscoveryPolicy";
 import { buildErrorBody } from "@omniroute/open-sse/utils/error";
@@ -347,16 +353,8 @@ async function buildUnifiedModelsResponseCore(
       modelId: string,
       pricing?: unknown,
       isFree?: boolean
-    ): boolean => {
-      if (!hidePaid) return false;
-      const provider = aliasToProviderId[providerKey] || providerKey;
-      // isFree:true is the first door — custom row kept even when its provider is outside FREE_MODEL_BUDGETS.
-      if (isFreeModel(provider, { id: modelId, pricing: pricing as any, isFree })) return false;
-      // hidePaid is on and model is non-free → hidden. No need to consult FREE_MODEL_BUDGETS
-      // separately: paid on a free-capable provider stays hidden, free on a non-budget provider
-      // already returned above.
-      return true;
-    };
+    ): boolean =>
+      decideHidePaid(hidePaid, providerKey, modelId, pricing, isFree, aliasToProviderId);
     // #11481: opt-in explicit model exposure allow/deny list — same call sites
     // as shouldHidePaid above (mirrored into the auto/* combo candidate pool
     // via open-sse/services/autoCombo/modelExposureFilter.ts, per #6512's
@@ -770,17 +768,12 @@ async function buildUnifiedModelsResponseCore(
         knownMetadata.map((metadata) => metadata.maxOutputTokens)
       );
 
-      const inputModalities = knownMetadata.every(
-        (metadata) => Array.isArray(metadata.inputModalities) && metadata.inputModalities.length > 0
-      )
-        ? intersectStringArrays(knownMetadata.map((metadata) => metadata.inputModalities || []))
-        : [];
-      const outputModalities = knownMetadata.every(
-        (metadata) =>
-          Array.isArray(metadata.outputModalities) && metadata.outputModalities.length > 0
-      )
-        ? intersectStringArrays(knownMetadata.map((metadata) => metadata.outputModalities || []))
-        : [];
+      const inputModalities = intersectKnownStringArrays(
+        knownMetadata.map((m) => (Array.isArray(m.inputModalities) ? m.inputModalities : []))
+      );
+      const outputModalities = intersectKnownStringArrays(
+        knownMetadata.map((m) => (Array.isArray(m.outputModalities) ? m.outputModalities : []))
+      );
 
       const capabilities = mergeComboCapabilities(knownMetadata);
       if (targetMetadata.some((metadata) => metadata === null)) {
@@ -895,20 +888,12 @@ async function buildUnifiedModelsResponseCore(
         const knownAutoMeta = autoTargetMetadata.filter(
           (m): m is ComboTargetCatalogMetadata => m !== null
         );
-        const autoInputModalities =
-          knownAutoMeta.length > 0 &&
-          knownAutoMeta.every(
-            (m) => Array.isArray(m.inputModalities) && m.inputModalities.length > 0
-          )
-            ? intersectStringArrays(knownAutoMeta.map((m) => m.inputModalities || []))
-            : [];
-        const autoOutputModalities =
-          knownAutoMeta.length > 0 &&
-          knownAutoMeta.every(
-            (m) => Array.isArray(m.outputModalities) && m.outputModalities.length > 0
-          )
-            ? intersectStringArrays(knownAutoMeta.map((m) => m.outputModalities || []))
-            : [];
+        const autoInputModalities = intersectKnownStringArrays(
+          knownAutoMeta.map((m) => (Array.isArray(m.inputModalities) ? m.inputModalities : []))
+        );
+        const autoOutputModalities = intersectKnownStringArrays(
+          knownAutoMeta.map((m) => (Array.isArray(m.outputModalities) ? m.outputModalities : []))
+        );
         const autoCapabilities: Record<string, boolean | string[]> = {
           tool_calling: true,
           reasoning: true,
@@ -1353,6 +1338,7 @@ async function buildUnifiedModelsResponseCore(
     ) {
       try {
         const openRouterCatalog = await getOpenRouterCatalog();
+        const openRouterCaps: Record<string, ModelCapabilityEntry> = {};
         for (const openRouterModel of openRouterCatalog.data || []) {
           if (!openRouterModel?.id || typeof openRouterModel.id !== "string") continue;
           const qualifiedId = qualifyOpenRouterModelId(openRouterModel.id);
@@ -1410,10 +1396,16 @@ async function buildUnifiedModelsResponseCore(
             ...(outputModalities.length > 0 ? { output_modalities: outputModalities } : {}),
             ...(Object.keys(capabilities).length > 0 ? { capabilities } : {}),
           });
-
-          // #9147: OpenRouter catalog can be large — yield periodically.
+          const capEntry = openRouterCapabilityEntry(
+            openRouterModel,
+            inputModalities,
+            outputModalities,
+            capabilities
+          );
+          if (capEntry) openRouterCaps[openRouterModel.id] = capEntry;
           await maybeYieldCatalogBuild();
         }
+        upsertSyncedCapabilities("openrouter", openRouterCaps);
       } catch (err) {
         console.error("[catalog] Error loading OpenRouter catalog:", err);
       }
@@ -1659,10 +1651,10 @@ async function buildUnifiedModelsResponseCore(
           if (model.isHidden === true) continue;
           if (isModelHiddenBulk(providerId, modelId, canonicalProviderId)) continue;
           if (isExcludedByProviderConnections(canonicalProviderId, modelId)) continue;
-          // #6328: apply hidePaidModels to user-defined custom rows too.
-          // Custom entries do not carry pricing, so shouldHidePaid() decides
-          // via FREE_MODEL_IDS_BY_PROVIDER — matches synced/PROVIDER_MODELS.
+          // #6328: apply hidePaidModels to user-defined custom rows too. A local custom
+          // row flagged isFree:true stays trusted, even outside the free-tier catalog.
           if (
+            (model as { isFree?: unknown }).isFree !== true &&
             shouldHidePaid(
               canonicalProviderId,
               modelId,
