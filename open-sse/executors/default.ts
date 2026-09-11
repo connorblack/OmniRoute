@@ -216,6 +216,34 @@ function applyCustomHeaders(headers: Record<string, string>, rawCustomHeaders: u
   }
 }
 
+const OPENROUTER_ATTRIBUTION_HEADERS = [
+  "HTTP-Referer",
+  "X-Title",
+  "X-OpenRouter-Title",
+  "X-OpenRouter-Categories",
+] as const;
+
+/**
+ * OpenRouter serves some free models (thinkingmachines/inkling:free) only to apps
+ * it recognizes as agent harnesses, keyed on HTTP-Referer. When the caller sends
+ * its own attribution, forward it as a set instead of the registry's proxy identity.
+ */
+function forwardOpenRouterAttribution(
+  headers: Record<string, string>,
+  clientHeaders: Record<string, string> | null | undefined
+): void {
+  const clientValue = (name: string) =>
+    clientHeaders?.[name.toLowerCase()] ?? clientHeaders?.[name];
+  if (!clientValue("HTTP-Referer")?.trim()) return;
+  for (const name of OPENROUTER_ATTRIBUTION_HEADERS) {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === name.toLowerCase()) delete headers[key];
+    }
+    const value = clientValue(name);
+    if (value?.trim()) headers[name] = value;
+  }
+}
+
 export class DefaultExecutor extends BaseExecutor {
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
@@ -690,6 +718,10 @@ export class DefaultExecutor extends BaseExecutor {
           model
         );
       }
+    }
+
+    if (this.provider === "openrouter") {
+      forwardOpenRouterAttribution(headers, clientHeaders);
     }
 
     normalizeAnthropicHeaderVariants(headers);
