@@ -155,17 +155,8 @@ export function getComboTargetModelId(
   const providerId = resolveCanonicalProviderId(maps.aliasToProviderId, rawProvider);
   if (!providerId || providerId === "unknown") return null;
 
-  // `rawProvider`/`providerId` are always valid strip candidates on their own —
-  // they are how the caller explicitly qualified this target, and `providerId`
-  // is what `rawProvider` already canonicalized to via this same local alias
-  // map. `getProviderPrefixes()` re-validates each candidate against the
-  // GLOBAL `parseModel()` alias table (`open-sse/services/model.ts`), which
-  // deliberately canonicalizes some registered-provider prefixes to a
-  // different provider id for auth/execution (e.g. "agy" -> "antigravity",
-  // #8013) — that round trip then fails for those prefixes even though they
-  // are exactly the prefix this target was qualified with, so the "agy/"
-  // qualifier was never stripped and downstream registry/spec/synced-capability
-  // lookups missed entirely (#12851).
+  // Strip the target's own qualifier first: parseModel() maps some registered
+  // prefixes to another provider (agy -> antigravity), so they fail the round trip.
   let modelId = modelStr;
   for (const prefix of [rawProvider, providerId, ...getProviderPrefixes(maps, providerId, rawProvider)]) {
     const prefixWithSlash = `${prefix}/`;
