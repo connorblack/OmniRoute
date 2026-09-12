@@ -4,7 +4,7 @@ import { getLegacyCliTokenSync, getMachineTokenSync } from "../../lib/machineTok
 import type { PolicyContext } from "./context";
 import { CLI_TOKEN_HEADER, PEER_IP_HEADER, VIA_PROXY_HEADER } from "./headers";
 import { resolveStampedPeer, resolveStampedViaProxy } from "./peerStamp";
-import { isLoopbackHost, isPrivateLanHost } from "./routeGuard";
+import { classifyHostLocality, isLoopbackHost, isPrivateLanHost } from "./routeGuard";
 
 /**
  * Peer-locality + local-CLI-token helpers shared by the route policies.
@@ -54,15 +54,65 @@ export function isLoopbackRequest(ctx: PolicyContext): boolean {
   return peerAddress ? isLoopbackHost(peerAddress) : false;
 }
 
+// Cloudflare adds these at its edge and a client cannot strip them, so a request
+// carrying any of them came through Cloudflare (e.g. a Cloudflare Tunnel into the
+// same local proxy) and is never treated as LAN.
+const CLOUDFLARE_EDGE_HEADERS = ["cf-connecting-ip", "cf-ray", "cdn-loop"];
+
+function ipv4ToNumber(ip: string): number | null {
+  const octets = ip.split(".");
+  if (octets.length !== 4 || !octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)) {
+    return null;
+  }
+  return octets.reduce((acc, o) => acc * 256 + Number(o), 0);
+}
+
+function inIPv4Cidr(ip: string, cidr: string): boolean {
+  const [base, bitsRaw = "32"] = cidr.split("/");
+  const bits = Number(bitsRaw);
+  const ipNum = ipv4ToNumber(ip);
+  const baseNum = ipv4ToNumber(base);
+  if (ipNum === null || baseNum === null || !Number.isInteger(bits) || bits < 0 || bits > 32) {
+    return false;
+  }
+  const blockSize = 2 ** (32 - bits);
+  return Math.floor(ipNum / blockSize) === Math.floor(baseNum / blockSize);
+}
+
+/**
+ * Operator opt-in for a reverse proxy on a trusted network (e.g. Traefik on a
+ * tailnet-only host). A request forwarded by a loopback / private-LAN proxy
+ * counts as LAN when the client address the proxy appended (the rightmost
+ * X-Forwarded-For entry) is inside OMNIROUTE_PROXIED_LAN_CIDRS (comma-separated
+ * IPv4 CIDRs) and no Cloudflare edge header is present. Earlier X-Forwarded-For
+ * entries are client-supplied and ignored. Unset: proxied requests are never LAN.
+ */
+export function isTrustedProxiedLanClient(
+  proxyPeer: string | null,
+  headers: Pick<Headers, "get"> | undefined,
+  cidrs = process.env.OMNIROUTE_PROXIED_LAN_CIDRS ?? ""
+): boolean {
+  const ranges = cidrs
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (ranges.length === 0 || classifyHostLocality(proxyPeer) === "remote") return false;
+  if (CLOUDFLARE_EDGE_HEADERS.some((name) => headers?.get?.(name))) return false;
+  const hops = (headers?.get?.("x-forwarded-for") ?? "").split(",");
+  const client = hops[hops.length - 1].trim().replace(/^::ffff:/i, "");
+  return ranges.some((cidr) => inIPv4Cidr(client, cidr));
+}
+
 // Owner-authorized (2026-05-30): allow LOCAL_ONLY *paths* from a trusted private
 // LAN, based on the real socket peer IP (not spoofable). Does NOT relax the
-// CLI-token gate, which stays strictly loopback. Also falls back to "not LAN"
-// when a reverse-proxy hop is detected (the apparent LAN IP would be the proxy,
-// not the end-user — see isViaProxyRequest above).
+// CLI-token gate, which stays strictly loopback. Behind a reverse proxy the
+// apparent LAN IP is the proxy, not the end-user (see isViaProxyRequest above),
+// so a proxied request is LAN only through isTrustedProxiedLanClient.
 export function isPrivateLanRequest(ctx: PolicyContext): boolean {
-  if (isViaProxyRequest(ctx)) return false;
   const peerAddress = requestPeerAddress(ctx);
-  return peerAddress ? isPrivateLanHost(peerAddress) : false;
+  if (!peerAddress) return false;
+  if (isViaProxyRequest(ctx)) return isTrustedProxiedLanClient(peerAddress, ctx.request.headers);
+  return isPrivateLanHost(peerAddress);
 }
 
 /** Strictly-loopback machine-token check (constant-time). */
