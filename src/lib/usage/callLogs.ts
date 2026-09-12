@@ -140,6 +140,22 @@ function generateLogId() {
   return `${Date.now()}-${randomUUID()}`;
 }
 
+// trackPendingRequest (src/lib/usage/usageHistory.ts) deliberately reuses ONE
+// pending-request id across every attempt sharing a correlationId -- combo
+// fallbacks, zeroLatencyOptimizationsEnabled hedged racing targets, and
+// stream-recovery retries -- so a dashboard tab polling that id survives a
+// mid-stream target switch. That id flows straight into `entry.id` here
+// (open-sse/handlers/chatCore/attemptLogging.ts), so two attempts that are
+// each a genuine, separately-billable provider call can race to INSERT the
+// same `id` into call_logs (TEXT PRIMARY KEY). Whichever loses is a
+// "UNIQUE constraint failed: call_logs.id" SqliteError, and the row it
+// carried -- real tokens/cost for a real call -- must not just be dropped.
+const MAX_ID_COLLISION_RETRIES = 5;
+
+function isDuplicateCallLogIdError(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed: call_logs\.id/.test(error.message);
+}
+
 async function resolveAccountName(connectionId: string | null | undefined) {
   let account = connectionId ? connectionId.slice(0, 8) : "-";
 
@@ -587,7 +603,7 @@ async function saveCallLogOperation(entry: any): Promise<void> {
     }
 
     const db = getDbInstance();
-    db.prepare(
+    const insertStmt = db.prepare(
       `
       INSERT INTO call_logs (
         id, timestamp, method, path, status, model, requested_model, provider,
@@ -614,7 +630,8 @@ async function saveCallLogOperation(entry: any): Promise<void> {
         @videoContentRemoved
       )
     `
-    ).run({
+    );
+    const insertParams = {
       ...logEntry,
       errorSummary: toStoredErrorSummary(protectedError),
       detailState,
@@ -625,7 +642,27 @@ async function saveCallLogOperation(entry: any): Promise<void> {
       hasResponseBody: protectedResponseBody !== null ? 1 : 0,
       hasPipelineDetails: protectedPipelinePayloads ? 1 : 0,
       requestSummary,
-    });
+    };
+
+    for (let attempt = 0; ; attempt++) {
+      try {
+        insertStmt.run(insertParams);
+        break;
+      } catch (insertError) {
+        if (attempt >= MAX_ID_COLLISION_RETRIES || !isDuplicateCallLogIdError(insertError)) {
+          throw insertError;
+        }
+        // The id this row was assigned (usually the shared pending-request id,
+        // see generateLogId's caller comment above) is already taken by a
+        // concurrent attempt's row. Mint a fresh, collision-proof id and retry
+        // rather than dropping this attempt's usage data. The artifact (if
+        // any) was already written under the old id; that's only a cosmetic
+        // mismatch in its embedded `summary.id`, since lookups key off this
+        // row's own `id`/`artifact_relpath` columns, never off the artifact's
+        // internal fields.
+        insertParams.id = generateLogId();
+      }
+    }
 
     if (detailState === "ready" && typeof logEntry.responseId === "string") {
       // The durable row is now authoritative; drop the bridge entry instead
