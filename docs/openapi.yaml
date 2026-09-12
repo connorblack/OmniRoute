@@ -9541,6 +9541,28 @@ paths:
       responses:
         "200":
           description: OK
+  /api/intelligence/fitness:
+    delete:
+      tags:
+        - Intelligence
+      summary: "DELETE intelligence › fitness"
+      responses:
+        "200":
+          description: OK
+    get:
+      tags:
+        - Intelligence
+      summary: "GET intelligence › fitness"
+      responses:
+        "200":
+          description: OK
+    put:
+      tags:
+        - Intelligence
+      summary: "PUT intelligence › fitness"
+      responses:
+        "200":
+          description: OK
   /api/intelligence/sync:
     delete:
       tags:

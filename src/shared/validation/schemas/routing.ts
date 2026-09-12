@@ -44,6 +44,24 @@ export const intelligenceSyncRequestSchema = z
   })
   .strict();
 
+export const fitnessOverrideEntrySchema = z.object({
+  model: modelIdSchema,
+  category: z.string().trim().min(1, "category is required").max(100),
+  score: z
+    .number()
+    .min(0, "score must be between 0 and 1")
+    .max(1, "score must be between 0 and 1"),
+});
+
+export const putFitnessOverridesSchema = z
+  .object({
+    overrides: z
+      .array(fitnessOverrideEntrySchema)
+      .min(1, "overrides must contain at least one entry")
+      .max(500, "overrides cannot exceed 500 entries"),
+  })
+  .strict();
+
 export const taskRoutingModelMapSchema = z
   .object({
     coding: z.string().max(200).optional(),
