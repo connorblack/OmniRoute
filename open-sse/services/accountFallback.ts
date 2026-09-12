@@ -54,6 +54,7 @@ import { getQuotaScopedModelForProvider, isAntigravityQuotaProvider } from "./an
 import { persistAntigravityFamilyCooldownIfQuota } from "./antigravityFamilyCooldown.ts";
 import {
   classifyGeminiQuotaMetricFromText,
+  msUntilGeminiDailyReset,
   isRpdExhausted,
   isRpmExhausted,
   isTpmExhausted,
@@ -78,12 +79,20 @@ const RESETS_IN_RE = /resets? in (\d+h)?(\d+m)?(\d+s)?/i;
 const RETRY_IN_SEC_RE = /please retry in (\d+(?:\.\d+)?)\s*s/i;
 const COOLDOWN_NUMERIC_RE = /^\d+(\.\d+)?$/;
 
-export type RetryHintProvenance = "header" | "google_rpc_retry_info" | "body";
+export type RetryHintProvenance =
+  | "header"
+  | "google_rpc_retry_info"
+  | "body"
+  | "upstream_daily_reset";
 
 export function retryHintBypassesMaxCooldownMs(
   provenance: RetryHintProvenance | undefined
 ): boolean {
-  return provenance === "header" || provenance === "google_rpc_retry_info";
+  return (
+    provenance === "header" ||
+    provenance === "google_rpc_retry_info" ||
+    provenance === "upstream_daily_reset"
+  );
 }
 
 import {
@@ -1940,7 +1949,18 @@ export function checkFallbackError(
     if (provider === "gemini" && status === HTTP_STATUS.RATE_LIMITED && _model) {
       const metricClass = classifyGeminiQuotaMetricFromText(errorStr);
       if (metricClass === "rpd") {
-        return buildRetryableFallback(RateLimitReason.QUOTA_EXHAUSTED);
+        const cooldownMs = msUntilGeminiDailyReset();
+        return {
+          shouldFallback: true,
+          cooldownMs,
+          baseCooldownMs: cooldownMs,
+          newBackoffLevel: 0,
+          usedUpstreamRetryHint: false,
+          retryHintSource: "upstream_daily_reset" as const,
+          reason: RateLimitReason.QUOTA_EXHAUSTED,
+          dailyQuotaExhausted: true,
+          quotaResetHintMs: cooldownMs,
+        };
       }
       if (metricClass === "rpm" || metricClass === "tpm") {
         return buildRetryableFallback(RateLimitReason.RATE_LIMIT_EXCEEDED);

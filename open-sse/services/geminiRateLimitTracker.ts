@@ -12,6 +12,7 @@
  */
 
 import geminiLimits from "../config/geminiRateLimits.json";
+import { nextDailyResetAtMs } from "./dailyQuotaReset.ts";
 
 // ── RPD (daily) state ────────────────────────────────────────────────────────
 
@@ -209,10 +210,18 @@ export function classifyGeminiQuotaMetricFromText(
   if (!errorText) return null;
   const lower = errorText.toLowerCase();
   if (!lower.includes("generativelanguage.googleapis.com")) return null;
-  if (lower.includes("_per_day") || lower.includes("per day")) return "rpd";
+  // Only Google's quotaId (e.g. GenerateRequestsPerDayPerProjectPerModel-FreeTier) tells a
+  // per-day request limit from a per-minute one; both share the _requests metric name.
+  if (lower.includes("perday") || lower.includes("_per_day") || lower.includes("per day"))
+    return "rpd";
   if (lower.includes("input_token_count") || lower.includes("token_count")) return "tpm";
   if (lower.includes("_requests")) return "rpm";
   return null;
+}
+
+/** Google resets free-tier requests-per-day quotas at midnight Pacific time. */
+export function msUntilGeminiDailyReset(nowMs: number = Date.now()): number {
+  return nextDailyResetAtMs("America/Los_Angeles", 0, nowMs) - nowMs;
 }
 
 // ── Increment both (convenience) ─────────────────────────────────────────────
