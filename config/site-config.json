@@ -1,7 +1,7 @@
 {
   "_comment": [
     "Declarative site config applied by scripts/bootstrap/apply-site-config.mjs.",
-    "Values mirror the tuning running on the LIVE gateway on 2026-09-12, read back through the same API routes this script writes.",
+    "Values mirror the tuning running on the LIVE gateway on 2026-09-12, read back through the same API routes this script writes. Exception: requestQueue.requestsPerMinute 35 and concurrentRequests 5 were set on the Service later that day to stop an NVIDIA request stampede.",
     "The dashboard is the source of truth. After tuning there, update this file to match, because applying a stale copy reverts dashboard changes.",
     "waitForCooldown intentionally omits maxRetryWaitMs/budgetMs: they are derived on read and rejected by the strict write schema."
   ],
@@ -9,9 +9,9 @@
     "resilienceSettings": {
       "requestQueue": {
         "autoEnableApiKeyProviders": true,
-        "requestsPerMinute": 600,
+        "requestsPerMinute": 35,
         "minTimeBetweenRequestsMs": 0,
-        "concurrentRequests": 48,
+        "concurrentRequests": 5,
         "maxWaitMs": 300000,
         "maxQueueDepth": 2000
       },
