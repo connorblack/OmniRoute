@@ -207,12 +207,30 @@ function openaiToGeminiBase(
   }
 
   // Thinking / Reasoning support (Google Gemini 2.0+ Thinking models)
-  // gemma-4 models return - 400: Thinking budget is not supported for this model.
-  // Mirrors the same guard in claude-to-gemini.ts. Port of the thinkingConfig
-  // guard half of decolua/9router#2480 (the signature-replay half of that PR
-  // is out of scope and not ported here).
+  // gemma-4 gets its own branch below (mirrors the same guard in claude-to-gemini.ts).
+  // Port of the thinkingConfig guard half of decolua/9router#2480 (the signature-replay
+  // half of that PR is out of scope and not ported here).
   if (model.startsWith("gemma-4")) {
-    // gemma-4 models returns - 400: Thinking budget is not supported for this model
+    // gemma-4 models return 400 "Thinking budget is not supported for this model" for
+    // any thinkingBudget, and 400 "Thinking level is not supported for this model" for
+    // any thinkingLevel other than "minimal". Gemma 4 also defaults to thinking ON, so
+    // a short/small max_tokens request with no explicit turn-down burns the whole output
+    // budget on thought tokens and returns empty text (finishReason MAX_TOKENS). An
+    // explicit request to turn reasoning off/down (reasoning_effort none/minimal, or the
+    // Claude-shape thinking field disabled / a zero budget_tokens) is the one case Gemma 4
+    // can honor, via thinkingLevel: "minimal" — anything else keeps prior behavior (no
+    // thinkingConfig, default thinking).
+    const gemmaEffort =
+      typeof body.reasoning_effort === "string" ? body.reasoning_effort.toLowerCase() : undefined;
+    const gemmaThinking = body.thinking as { type?: string; budget_tokens?: number } | undefined;
+    const gemmaWantsThinkingOff =
+      gemmaEffort === "none" ||
+      gemmaEffort === "minimal" ||
+      gemmaThinking?.type === "disabled" ||
+      (gemmaThinking?.type === "enabled" && gemmaThinking.budget_tokens === 0);
+    if (gemmaWantsThinkingOff) {
+      result.generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+    }
   } else {
     // 1. OpenAI format: reasoning_effort (none/low/medium/high/auto/max/xhigh)
     // "auto", "max", and "xhigh" are clamped to the high-tier budget because Gemini

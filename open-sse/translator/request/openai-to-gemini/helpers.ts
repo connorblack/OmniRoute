@@ -10,10 +10,16 @@ export type GeminiGenerationConfig = {
   topP?: unknown;
   topK?: unknown;
   maxOutputTokens?: unknown;
-  thinkingConfig?: {
-    thinkingBudget: number;
-    includeThoughts: boolean;
-  };
+  thinkingConfig?:
+    | {
+        thinkingBudget: number;
+        includeThoughts: boolean;
+      }
+    // Gemma 4 rejects thinkingBudget with a 400 ("Thinking budget is not supported
+    // for this model") but accepts thinkingLevel: "minimal" as its one throttle.
+    | {
+        thinkingLevel: string;
+      };
   responseMimeType?: string;
   responseSchema?: unknown;
   stopSequences?: string[] | unknown[];
