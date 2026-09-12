@@ -628,3 +628,95 @@ test("Ollama Cloud projects native efforts for base, tagged, and combo models", 
     assert.deepEqual(capabilitiesFor(modelId).effort_tiers, narrowEfforts, modelId);
   }
 });
+
+// #12851 — a combo leaf resolved through the `agy` provider prefix must derive the
+// same context_length the direct /v1/models entry reports for that model. `agy` is
+// its own registered provider (own OAuth connection, own AGY_PUBLIC_MODELS catalog)
+// but canonicalizes to `antigravity` for credential/execution purposes (#8013); the
+// combo target parser previously failed to strip the "agy/" qualifier for that case,
+// so the leaf resolved against a bogus provider/model pair and every field —
+// including context_length — silently dropped out of the combo.
+
+test("single-target combo whose only leaf is an agy model derives its known context_length", async () => {
+  await providersDb.createProviderConnection({
+    provider: "agy",
+    authType: "oauth",
+    name: "agy-gpt-oss-single-target-combo",
+    accessToken: "agy-test-token",
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: {},
+  });
+  await combosDb.createCombo({
+    name: "agy-gpt-oss-single-target-combo",
+    strategy: "auto",
+    models: ["agy/gpt-oss-120b-medium"],
+  });
+
+  const response = await catalog.getUnifiedModelsResponse(
+    new Request("http://localhost/api/v1/models")
+  );
+  const body = (await response.json()) as { data: Array<Record<string, unknown>> };
+  const direct = body.data.find((item) => item.id === "agy/gpt-oss-120b-medium");
+  const combo = body.data.find((item) => item.id === "agy-gpt-oss-single-target-combo");
+
+  assert.equal(response.status, 200);
+  assert.ok(direct);
+  assert.ok(combo);
+  assert.equal(direct.context_length, 131072);
+  assert.equal(combo.context_length, direct.context_length);
+  assert.equal(combo.max_input_tokens, direct.max_input_tokens);
+});
+
+test("mixed combo derives the smaller agy leaf's context_length", async () => {
+  const largeModelId = "gpt-5.6-terra";
+  const largeContextWindow = 500000;
+  assert.equal(
+    contextOverrides.setModelContextOverride("codex", largeModelId, largeContextWindow),
+    true
+  );
+
+  try {
+    await providersDb.createProviderConnection({
+      provider: "agy",
+      authType: "oauth",
+      name: "agy-gpt-oss-mixed-combo",
+      accessToken: "agy-test-token",
+      isActive: true,
+      testStatus: "active",
+      providerSpecificData: {},
+    });
+    await providersDb.createProviderConnection({
+      provider: "codex",
+      authType: "oauth",
+      name: "codex-mixed-agy-combo",
+      accessToken: "codex-test-token",
+      isActive: true,
+      testStatus: "active",
+      providerSpecificData: {},
+    });
+    await combosDb.createCombo({
+      name: "agy-gpt-oss-mixed-combo",
+      strategy: "auto",
+      models: ["agy/gpt-oss-120b-medium", `codex/${largeModelId}`],
+    });
+
+    const response = await catalog.getUnifiedModelsResponse(
+      new Request("http://localhost/api/v1/models")
+    );
+    const body = (await response.json()) as { data: Array<Record<string, unknown>> };
+    const agyDirect = body.data.find((item) => item.id === "agy/gpt-oss-120b-medium");
+    const codexDirect = body.data.find((item) => item.id === `cx/${largeModelId}`);
+    const combo = body.data.find((item) => item.id === "agy-gpt-oss-mixed-combo");
+
+    assert.equal(response.status, 200);
+    assert.ok(agyDirect);
+    assert.ok(codexDirect);
+    assert.ok(combo);
+    assert.equal(agyDirect.context_length, 131072);
+    assert.equal(codexDirect.context_length, largeContextWindow);
+    assert.equal(combo.context_length, agyDirect.context_length);
+  } finally {
+    contextOverrides.removeModelContextOverride("codex", largeModelId);
+  }
+});
