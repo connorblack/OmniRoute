@@ -1,0 +1,1356 @@
+{
+  "default": {
+    "main_agent": {
+      "kind": "turn",
+      "config_key": "agent.gateway_timeout",
+      "combo": "pool/orchestrator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 11,
+        "attempted_members": 10,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 9030.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 1800.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 1800,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "delegation": {
+      "kind": "turn",
+      "config_key": "delegation.child_timeout_seconds",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 3600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 3600,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.compression": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.compression.timeout",
+      "combo": "hermes/compression",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 6,
+        "attempted_members": 6,
+        "max_retries": 3,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 60000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1476.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 300.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.skills_hub": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.skills_hub.timeout",
+      "combo": "hermes/skills-hub",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.approval": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.approval.timeout",
+      "combo": "hermes/approval",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.title_generation": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.title_generation.timeout",
+      "combo": "hermes/title-generation",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.tts_audio_tags": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.tts_audio_tags.timeout",
+      "combo": "hermes/tts-audio-tags",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1808.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.triage_specifier": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.triage_specifier.timeout",
+      "combo": "hermes/triage-specifier",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.kanban_decomposer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.kanban_decomposer.timeout",
+      "combo": "hermes/kanban-decomposer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.profile_describer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.profile_describer.timeout",
+      "combo": "hermes/profile-describer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.goal_judge": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.goal_judge.timeout",
+      "combo": "hermes/goal-judge",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 602.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.curator": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.curator.timeout",
+      "combo": "hermes/curator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1806.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.web_extract": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.web_extract.timeout",
+      "combo": "hermes/web-extract",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 360.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.monitor": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.monitor.timeout",
+      "combo": null,
+      "skipped": "no combo resolved (provider not omni-route / empty model)"
+    }
+  },
+  "code-reviewer": {
+    "main_agent": {
+      "kind": "turn",
+      "config_key": "agent.gateway_timeout",
+      "combo": "pool/orchestrator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 11,
+        "attempted_members": 10,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 9030.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 1800.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 1800,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "delegation": {
+      "kind": "turn",
+      "config_key": "delegation.child_timeout_seconds",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 3600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 3600,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.compression": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.compression.timeout",
+      "combo": "hermes/compression",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 6,
+        "attempted_members": 6,
+        "max_retries": 3,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 60000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1476.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 300.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.skills_hub": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.skills_hub.timeout",
+      "combo": "hermes/skills-hub",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.approval": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.approval.timeout",
+      "combo": "hermes/approval",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.title_generation": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.title_generation.timeout",
+      "combo": "hermes/title-generation",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.tts_audio_tags": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.tts_audio_tags.timeout",
+      "combo": "hermes/tts-audio-tags",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1808.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.triage_specifier": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.triage_specifier.timeout",
+      "combo": "hermes/triage-specifier",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.kanban_decomposer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.kanban_decomposer.timeout",
+      "combo": "hermes/kanban-decomposer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.profile_describer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.profile_describer.timeout",
+      "combo": "hermes/profile-describer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.goal_judge": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.goal_judge.timeout",
+      "combo": "hermes/goal-judge",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 602.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.curator": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.curator.timeout",
+      "combo": "hermes/curator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1806.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.web_extract": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.web_extract.timeout",
+      "combo": "hermes/web-extract",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 360.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.monitor": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.monitor.timeout",
+      "combo": "hermes/monitor",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    }
+  },
+  "daytona-smoke": {
+    "main_agent": {
+      "kind": "turn",
+      "config_key": "agent.gateway_timeout",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 1800.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 1800,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "delegation": {
+      "kind": "turn",
+      "config_key": "delegation.child_timeout_seconds",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 3600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 3600,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.compression": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.compression.timeout",
+      "combo": "hermes/compression",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 6,
+        "attempted_members": 6,
+        "max_retries": 3,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 60000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1476.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 300.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.skills_hub": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.skills_hub.timeout",
+      "combo": "hermes/skills-hub",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.approval": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.approval.timeout",
+      "combo": "hermes/approval",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.title_generation": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.title_generation.timeout",
+      "combo": "hermes/title-generation",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.tts_audio_tags": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.tts_audio_tags.timeout",
+      "combo": "hermes/tts-audio-tags",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1808.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.triage_specifier": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.triage_specifier.timeout",
+      "combo": "hermes/triage-specifier",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.kanban_decomposer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.kanban_decomposer.timeout",
+      "combo": "hermes/kanban-decomposer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.profile_describer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.profile_describer.timeout",
+      "combo": "hermes/profile-describer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.goal_judge": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.goal_judge.timeout",
+      "combo": "hermes/goal-judge",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 602.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.curator": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.curator.timeout",
+      "combo": "hermes/curator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1806.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.web_extract": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.web_extract.timeout",
+      "combo": "hermes/web-extract",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 360.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.monitor": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.monitor.timeout",
+      "combo": null,
+      "skipped": "no combo resolved (provider not omni-route / empty model)"
+    }
+  },
+  "kanban-code-orchestrator": {
+    "main_agent": {
+      "kind": "turn",
+      "config_key": "agent.gateway_timeout",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 1800.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 1800,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "delegation": {
+      "kind": "turn",
+      "config_key": "delegation.child_timeout_seconds",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 3600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 3600,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.compression": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.compression.timeout",
+      "combo": "hermes/compression",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 6,
+        "attempted_members": 6,
+        "max_retries": 3,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 60000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1476.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 300.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.skills_hub": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.skills_hub.timeout",
+      "combo": "hermes/skills-hub",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.approval": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.approval.timeout",
+      "combo": "hermes/approval",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.title_generation": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.title_generation.timeout",
+      "combo": "hermes/title-generation",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.tts_audio_tags": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.tts_audio_tags.timeout",
+      "combo": "hermes/tts-audio-tags",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1808.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.triage_specifier": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.triage_specifier.timeout",
+      "combo": "hermes/triage-specifier",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.kanban_decomposer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.kanban_decomposer.timeout",
+      "combo": "hermes/kanban-decomposer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.profile_describer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.profile_describer.timeout",
+      "combo": "hermes/profile-describer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.goal_judge": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.goal_judge.timeout",
+      "combo": "hermes/goal-judge",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 602.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.curator": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.curator.timeout",
+      "combo": "hermes/curator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1806.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.web_extract": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.web_extract.timeout",
+      "combo": "hermes/web-extract",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 360.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.monitor": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.monitor.timeout",
+      "combo": null,
+      "skipped": "no combo resolved (provider not omni-route / empty model)"
+    }
+  },
+  "kanban-code-worker": {
+    "main_agent": {
+      "kind": "turn",
+      "config_key": "agent.gateway_timeout",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 1800.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 1800,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "delegation": {
+      "kind": "turn",
+      "config_key": "delegation.child_timeout_seconds",
+      "combo": "pool/subagent",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 9,
+        "attempted_members": 9,
+        "max_retries": 1,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 120000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2173.5,
+        "capped_by_safety_net": true
+      },
+      "current_s": 3600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 3600,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.compression": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.compression.timeout",
+      "combo": "hermes/compression",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 6,
+        "attempted_members": 6,
+        "max_retries": 3,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 60000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1476.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 300.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.skills_hub": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.skills_hub.timeout",
+      "combo": "hermes/skills-hub",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.approval": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.approval.timeout",
+      "combo": "hermes/approval",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.title_generation": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.title_generation.timeout",
+      "combo": "hermes/title-generation",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.tts_audio_tags": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.tts_audio_tags.timeout",
+      "combo": "hermes/tts-audio-tags",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1808.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 30.0,
+      "current_is_implicit_default": true,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.triage_specifier": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.triage_specifier.timeout",
+      "combo": "hermes/triage-specifier",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.kanban_decomposer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.kanban_decomposer.timeout",
+      "combo": "hermes/kanban-decomposer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 903.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 180.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.profile_describer": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.profile_describer.timeout",
+      "combo": "hermes/profile-describer",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 60.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.goal_judge": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.goal_judge.timeout",
+      "combo": "hermes/goal-judge",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 1,
+        "attempted_members": 1,
+        "max_retries": 1,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 602.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.curator": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.curator.timeout",
+      "combo": "hermes/curator",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 2,
+        "attempted_members": 2,
+        "max_retries": 2,
+        "retry_delay_ms": 1500,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 1806.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 600.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.web_extract": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.web_extract.timeout",
+      "combo": "hermes/web-extract",
+      "budget_s": 600.0,
+      "budget_detail": {
+        "members": 3,
+        "attempted_members": 3,
+        "max_retries": 2,
+        "retry_delay_ms": 2000,
+        "target_timeout_ms": 300000,
+        "combo_timeout_ms": 0,
+        "raw_sum_s": 2712.0,
+        "capped_by_safety_net": true
+      },
+      "current_s": 360.0,
+      "current_is_implicit_default": false,
+      "proposed_s": 660,
+      "flagged_needs_combo_timeout_ms": true
+    },
+    "auxiliary.monitor": {
+      "kind": "auxiliary",
+      "config_key": "auxiliary.monitor.timeout",
+      "combo": null,
+      "skipped": "no combo resolved (provider not omni-route / empty model)"
+    }
+  }
+}
