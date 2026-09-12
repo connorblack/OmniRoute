@@ -1,56 +1,56 @@
 {
   "_comment": [
     "Declarative site config applied by scripts/bootstrap/apply-site-config.mjs.",
-    "Every value here was derived from measured behaviour on a live deployment,",
-    "not from defaults. See the per-key notes below.",
+    "Values mirror the tuning running on the LIVE gateway on 2026-09-12, read back through the same API routes this script writes.",
+    "The dashboard is the source of truth. After tuning there, update this file to match, because applying a stale copy reverts dashboard changes.",
     "waitForCooldown intentionally omits maxRetryWaitMs/budgetMs: they are derived on read and rejected by the strict write schema."
   ],
   "settings": {
     "resilienceSettings": {
       "requestQueue": {
         "autoEnableApiKeyProviders": true,
-        "requestsPerMinute": 35,
-        "minTimeBetweenRequestsMs": 1000,
-        "concurrentRequests": 8,
-        "maxWaitMs": 500000,
-        "maxQueueDepth": 0
+        "requestsPerMinute": 600,
+        "minTimeBetweenRequestsMs": 0,
+        "concurrentRequests": 48,
+        "maxWaitMs": 300000,
+        "maxQueueDepth": 2000
       },
       "providerBreaker": {
         "oauth": {
-          "failureThreshold": 8,
-          "degradationThreshold": 5,
+          "failureThreshold": 12,
+          "degradationThreshold": 7,
           "resetTimeoutMs": 60000
         },
         "apikey": {
           "failureThreshold": 12,
           "degradationThreshold": 7,
-          "resetTimeoutMs": 30000
+          "resetTimeoutMs": 60000
         }
       },
       "waitForCooldown": {
         "enabled": true,
-        "maxRetries": 10,
-        "maxRetryWaitSec": 30
+        "maxRetries": 6,
+        "maxRetryWaitSec": 15
       },
       "comboCooldownWait": {
         "enabled": true,
-        "maxWaitMs": 15000,
+        "maxWaitMs": 3000,
         "maxAttempts": 3,
-        "budgetMs": 20000
+        "budgetMs": 10000
       }
     },
     "comboDefaults": {
-      "strategy": "auto",
-      "maxRetries": 5,
+      "strategy": "round-robin",
+      "maxRetries": 2,
       "retryDelayMs": 2000,
       "fallbackDelayMs": 0,
-      "targetTimeoutMs": 180000,
+      "targetTimeoutMs": 300000,
       "handoffThreshold": 0.85,
       "handoffModel": "",
       "maxMessagesForSummary": 30,
-      "maxComboDepth": 3,
+      "maxComboDepth": 10,
       "trackMetrics": true,
-      "reasoningTokenBufferEnabled": false,
+      "reasoningTokenBufferEnabled": true,
       "zeroLatencyOptimizationsEnabled": false,
       "resetAwareQuotaCacheTtlMs": 30000,
       "resetAwareQuotaCacheMaxStaleMs": 0
@@ -63,7 +63,7 @@
       "maxBackoffSteps": 10,
       "useExponentialBackoff": true
     },
-    "fallbackStrategy": "fill-first",
+    "fallbackStrategy": "round-robin",
     "localOnlyManageScopeBypassEnabled": true,
     "localOnlyManageScopeBypassPrefixes": ["/api/mcp/"]
   },
@@ -72,50 +72,54 @@
       {
         "models": [
           {
-            "name": "MiniMax-M3"
+            "name": "MiniMax-M*"
           },
           {
-            "name": "MiniMax-M2.7"
-          },
-          {
-            "name": "MiniMax-M2.7-highspeed"
-          },
-          {
-            "name": "MiniMax-M2.5"
-          },
-          {
-            "name": "MiniMax-M2.5-highspeed"
-          },
-          {
-            "name": "MiniMax-M2.1"
-          },
-          {
-            "name": "MiniMax-M2.1-highspeed"
-          },
-          {
-            "name": "MiniMax-M2"
-          },
-          {
-            "name": "minimax/MiniMax-M3"
-          },
-          {
-            "name": "minimax/MiniMax-M2.7"
-          },
-          {
-            "name": "minimax/MiniMax-M2.7-highspeed"
+            "name": "*minimax-m*"
           }
         ],
         "params": {
-          "reasoning_split": true
+          "thinking": {
+            "type": "adaptive"
+          },
+          "reasoning_effort": "max"
         }
-      }
-    ],
-    "override": [
+      },
       {
         "models": [
           {
-            "name": "*",
-            "protocol": "ollama-cloud"
+            "name": "*kimi-k3*"
+          },
+          {
+            "name": "k3"
+          },
+          {
+            "name": "k3-*"
+          },
+          {
+            "name": "*kimi-for-coding*"
+          },
+          {
+            "name": "*grok-4*"
+          }
+        ],
+        "params": {
+          "reasoning_effort": "max"
+        }
+      },
+      {
+        "models": [
+          {
+            "name": "*glm-5.*"
+          },
+          {
+            "name": "*deepseek-v4*"
+          },
+          {
+            "name": "*deepseek-r*"
+          },
+          {
+            "name": "*kimi-k2.7*"
           }
         ],
         "params": {
@@ -123,15 +127,36 @@
         }
       }
     ],
+    "override": [
+      {
+        "models": [
+          {
+            "name": "MiniMax-M*"
+          },
+          {
+            "name": "*minimax-m*"
+          }
+        ],
+        "params": {
+          "thinking": {
+            "type": "adaptive"
+          }
+        }
+      }
+    ],
     "filter": [
       {
         "models": [
           {
-            "name": "*",
-            "protocol": "ollama-cloud"
+            "name": "*kimi-k2.7*",
+            "protocol": "github"
+          },
+          {
+            "name": "*kimi-k2.7*",
+            "protocol": "gh"
           }
         ],
-        "params": ["reasoning"]
+        "params": ["reasoning_effort"]
       }
     ],
     "defaultRaw": []
