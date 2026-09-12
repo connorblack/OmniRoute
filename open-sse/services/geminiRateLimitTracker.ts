@@ -215,8 +215,18 @@ export function classifyGeminiQuotaMetricFromText(
   if (lower.includes("perday") || lower.includes("_per_day") || lower.includes("per day"))
     return "rpd";
   if (lower.includes("input_token_count") || lower.includes("token_count")) return "tpm";
-  if (lower.includes("_requests")) return "rpm";
+  if (lower.includes("_requests")) {
+    // Live traffic keeps only error.message, so the quotaId is gone and the limit value is
+    // the only per-day signal ("limit: 20" is RPD for Flash, "limit: 5" is its RPM).
+    const quota = /limit:\s*(\d+),\s*model:\s*([\w.-]+)/i.exec(errorText);
+    return quota && isDailyRequestLimit(quota[2], Number(quota[1])) ? "rpd" : "rpm";
+  }
   return null;
+}
+
+function isDailyRequestLimit(modelId: string, limit: number): boolean {
+  const rpd = getModelRpd(modelId);
+  return rpd > 0 && limit === rpd && rpd !== getModelRpm(modelId);
 }
 
 /** Google resets free-tier requests-per-day quotas at midnight Pacific time. */

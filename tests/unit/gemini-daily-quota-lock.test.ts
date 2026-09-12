@@ -122,3 +122,46 @@ test("per-minute request and token 429s keep Google's short retry hint", () => {
     `TPM cooldown ${tpm.cooldownMs}ms`
   );
 });
+
+// Live combo traffic reaches the classifier as error.message only, so the quotaId is gone.
+// The limit value in the message is then the only per-day signal.
+function geminiMessage(limit: number, model: string, metric = REQUESTS) {
+  return (
+    "You exceeded your current quota, please check your plan and billing details. " +
+    `* Quota exceeded for metric: ${metric}, limit: ${limit}, model: ${model}\n` +
+    "Please retry in 45.293001471s."
+  );
+}
+
+test("the message form alone still separates per-day from per-minute request limits", () => {
+  assert.equal(classifyGeminiQuotaMetricFromText(geminiMessage(20, "gemini-3.8-flash")), "rpd");
+  assert.equal(classifyGeminiQuotaMetricFromText(geminiMessage(5, "gemini-3.8-flash")), "rpm");
+  assert.equal(
+    classifyGeminiQuotaMetricFromText(geminiMessage(500, "gemini-3.1-flash-lite")),
+    "rpd"
+  );
+  assert.equal(
+    classifyGeminiQuotaMetricFromText(geminiMessage(15, "gemini-3.1-flash-lite")),
+    "rpm"
+  );
+  assert.equal(
+    classifyGeminiQuotaMetricFromText(geminiMessage(14400, "gemma-4-26b-a4b-it")),
+    "rpd"
+  );
+  assert.equal(classifyGeminiQuotaMetricFromText(geminiMessage(20, "unknown-model")), "rpm");
+});
+
+test("a message-only per-day 429 locks until midnight Pacific", () => {
+  const before = Date.now();
+  const result = checkFallbackError(
+    429,
+    geminiMessage(20, "gemini-3.8-flash"),
+    0,
+    "gemini-3.8-flash",
+    "gemini",
+    null,
+    PROFILE
+  );
+  assert.equal(result.reason, RateLimitReason.QUOTA_EXHAUSTED);
+  assert.deepEqual(pacificClock(before + result.cooldownMs + 500), { hour: 0, minute: 0 });
+});
