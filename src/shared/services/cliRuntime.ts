@@ -73,6 +73,18 @@ const CLI_TOOLS: Record<string, any> = {
       state: ".cursor/agent-cli-state.json",
     },
   },
+  "cursor-cli": {
+    defaultCommands: ["cursor-agent", "agent"],
+    envBinKey: "CLI_CURSOR_CLI_BIN",
+    requiresBinary: true,
+    // Cursor startup can be slower on first run in containerized host-mount mode.
+    healthcheckTimeoutMs: 15000,
+    paths: {
+      config: ".cursor/cli-config.json",
+      auth: ".config/cursor/auth.json",
+      state: ".cursor/agent-cli-state.json",
+    },
+  },
   windsurf: {
     defaultCommand: null,
     envBinKey: "CLI_WINDSURF_BIN",
@@ -319,6 +331,23 @@ const CLI_TOOLS: Record<string, any> = {
     healthcheckTimeoutMs: 8000,
     paths: {
       config: ".config/crush/crush.json",
+    },
+  },
+  antigravity: {
+    defaultCommand: "agy",
+    envBinKey: "CLI_ANTIGRAVITY_BIN",
+    requiresBinary: true,
+    healthcheckTimeoutMs: 8000,
+    paths: {},
+  },
+  copilot: {
+    defaultCommand: "copilot",
+    envBinKey: "CLI_COPILOT_BIN",
+    requiresBinary: true,
+    healthcheckTimeoutMs: 8000,
+    paths: {
+      settings: ".copilot/settings.json",
+      config: ".copilot/config.json",
     },
   },
   // 5dive keeps its credentials in root-owned auth profiles under a system
@@ -627,6 +656,11 @@ const getExpectedParentPaths = (): string[] => {
   return [
     home,
     ...userBinPaths,
+    // CLI_EXTRA_PATHS is already an explicit, sanitized opt-in (see getExtraPaths()
+    // below) — trust it as an install location the same way userBinPaths are trusted,
+    // so a CLI_MODE=host known-path candidate under one of these dirs isn't rejected
+    // as a symlink escape.
+    ...getExtraPaths(),
     userProfile,
     validatedAppData,
     validatedLocalAppData,
@@ -995,6 +1029,25 @@ export const checkKnownPath = async (commandPath: string) => {
 
 type KnownPathResult = Awaited<ReturnType<typeof checkKnownPath>>;
 
+// CLI_MODE=host names the profile whose whole point is a host-mounted CLI
+// install (docker-compose.yml's `host` profile bind-mounts CLI_EXTRA_PATHS
+// dirs read-only for exactly this). getLookupEnv() already puts
+// CLI_EXTRA_PATHS first in PATH for the same reason (#3321), but the
+// known-path table below is checked BEFORE any PATH lookup and always wins
+// on a match — so in host mode, check CLI_EXTRA_PATHS candidates first too,
+// or a host-mounted binary can never outrank the image's own bundled one.
+const getHostPreferredPaths = (commands: string[]): string[] => {
+  if (getRuntimeMode() !== "host") return [];
+  const extraPaths = getExtraPaths();
+  const paths: string[] = [];
+  for (const extraPath of extraPaths) {
+    for (const command of commands) {
+      paths.push(path.join(extraPath, command));
+    }
+  }
+  return paths;
+};
+
 export const locateCommandCandidate = async (
   commands: string[],
   env: Record<string, string | undefined>,
@@ -1009,7 +1062,7 @@ export const locateCommandCandidate = async (
   let bestKnownPathFailure: KnownPathResult | null = null;
   if (toolId) {
     const { match, bestFailure } = await findKnownPathMatch(
-      getKnownToolPaths(toolId),
+      [...getHostPreferredPaths(commands), ...getKnownToolPaths(toolId)],
       checkKnownPath
     );
     if (match) {
@@ -1153,7 +1206,7 @@ export const getCliConfigHome = (containerDeps?: ContainerEnvDeps) => {
 export const resolveOpencodeConfigPath = (
   _platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
-  homeDir = os.homedir()
+  homeDir = getCliConfigHome()
 ) => resolveOpenCodeConfigPath(env, homeDir);
 
 export const getOpenCodeConfigPath = () => resolveOpencodeConfigPath();
