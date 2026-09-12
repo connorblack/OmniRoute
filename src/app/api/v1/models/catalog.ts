@@ -637,12 +637,7 @@ async function buildUnifiedModelsResponseCore(
               getRegistryModelThinkingEfforts(providerId, modelId),
               getRegistryThinkingEfforts(providerId, modelId)
             );
-      // A known context window (static/registry, synced, or an operator
-      // `model_context_overrides` override — the same source the direct
-      // `/v1/models` entry reads via `getCanonicalModelMetadata`) is evidence
-      // on its own: it must not be discarded just because reasoning-effort
-      // evidence for this leaf is unknown, or a combo would silently advertise
-      // no context at all for a leaf whose direct listing reports one (#12851).
+      // A known context window alone keeps this leaf in the combo aggregate.
       if (
         connectionEfforts === undefined &&
         !source.providerRegistry &&
