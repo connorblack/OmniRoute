@@ -865,7 +865,18 @@ export async function getModelInfoCore(
   const { extendedContext } = parsed;
 
   if (!parsed.isAlias) {
-    const normalizedModel = normalizeCrossProxyModelId(parsed.model).modelId;
+    // #11503-style guard: only rewrite through the cross-proxy dialect table when
+    // the target provider does NOT already serve the raw requested id natively.
+    // CROSS_PROXY_MODEL_ALIASES is a flat, provider-agnostic table (built for
+    // dialects like NVIDIA NIM, which needs "gpt-oss:120b" -> "gpt-oss-120b" ->
+    // "openai/gpt-oss-120b"). Applying it unconditionally rewrote Ollama Cloud's
+    // own native id "gpt-oss:120b" into "gpt-oss-120b", which Ollama Cloud's
+    // live catalog does not contain, turning a working request into a
+    // "not available in the active live catalog" error (see model.ts tests).
+    const rawModel = parsed.model;
+    const normalizedModel = hasKnownProviderModel(parsed.provider, rawModel)
+      ? rawModel
+      : normalizeCrossProxyModelId(rawModel).modelId;
     const canonicalModel = resolveProviderModelAlias(parsed.provider, normalizedModel);
     return {
       provider: parsed.provider,
