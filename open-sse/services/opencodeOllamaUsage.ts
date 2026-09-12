@@ -18,9 +18,17 @@ const OLLAMA_CLOUD_USAGE_URL =
 const OLLAMA_CLOUD_SESSION_COOKIE = "__Secure-session";
 
 type OllamaUsageWindow = { usagePercent: number; resetAt: string | null };
+// The 2026-08-19 ollama.com/settings redesign replaced the session+weekly
+// tracks with a single monthly meter denominated in dollars. `currency` and
+// `segments` only ever populate on that monthly window.
+type OllamaMonthlyWindow = OllamaUsageWindow & {
+  currency?: string;
+  segments?: Array<{ name: string; used: number }>;
+};
 type OllamaCloudUsage = {
   session?: OllamaUsageWindow;
   weekly?: OllamaUsageWindow;
+  monthly?: OllamaMonthlyWindow;
   planTier?: string | null;
 };
 type OllamaCloudConfig =
@@ -89,24 +97,98 @@ function extractOllamaUsagePercent(trackHtml: string): number | null {
   return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
 }
 
+// The inner fill div's width (e.g. `style="width: 69.3%; "` on the child of
+// `data-usage-track`) always renders before any `data-usage-segment` button,
+// so the first width match in the whole track segment is the overall meter
+// fill, not one model's slice of it.
+function extractInnerWidthPercent(trackHtml: string): number | null {
+  const pct = toNumber(trackHtml.match(/style="[^"]*width\s*:\s*([0-9.]+)%/)?.[1], Number.NaN);
+  return Number.isFinite(pct) && pct >= 0 && pct <= 100 ? pct : null;
+}
+
+// Monthly usage is reported in dollars, e.g.
+// aria-label="Monthly usage $207.95 of $300 used". Percent is derived from
+// those two amounts so the rest of the pipeline (which is percent/threshold
+// based) doesn't need to know about currency.
+function extractMonthlyDollarPercent(
+  ariaLabel: string
+): { percent: number; currency: string } | null {
+  const match = ariaLabel.match(/\$([0-9][0-9,]*(?:\.[0-9]+)?)\s+of\s+\$([0-9][0-9,]*(?:\.[0-9]+)?)\s+used/i);
+  if (!match) return null;
+  const used = toNumber(match[1].replace(/,/g, ""), Number.NaN);
+  const total = toNumber(match[2].replace(/,/g, ""), Number.NaN);
+  if (!Number.isFinite(used) || !Number.isFinite(total) || total <= 0) return null;
+  return { percent: toPercentage((used / total) * 100), currency: "USD" };
+}
+
+function extractOllamaUsageSegments(trackHtml: string): Array<{ name: string; used: number }> {
+  const segments: Array<{ name: string; used: number }> = [];
+  const buttonRegex = /<button\b[^>]*data-usage-segment[^>]*>/g;
+  let match: RegExpExecArray | null;
+  while ((match = buttonRegex.exec(trackHtml))) {
+    const tag = match[0];
+    const model = tag.match(/data-model="([^"]*)"/)?.[1];
+    const requests = toNumber(tag.match(/data-requests="([^"]*)"/)?.[1], Number.NaN);
+    if (model && Number.isFinite(requests)) segments.push({ name: model, used: requests });
+  }
+  return segments;
+}
+
+// Backward-compatible with the pre-redesign markup (`class="local-time"
+// data-time="..."`), and robust to the redesign dropping that class: the
+// reset caption is the first `data-time` attribute after the meter, so a
+// bare fallback still lands on the right element.
+function extractResetTime(text: string): string | null {
+  const classScoped = text.match(/class="[^"]*local-time[^"]*"[^>]*data-time="([^"]*)"/);
+  if (classScoped) return classScoped[1] || null;
+  return text.match(/data-time="([^"]*)"/)?.[1] || null;
+}
+
+function extractMonthlyWindow(trackHtml: string): OllamaMonthlyWindow | null {
+  const tagHeader = trackHtml.match(/^[^>]*/)?.[0] ?? "";
+  const ariaLabel = tagHeader.match(/aria-label="([^"]*)"/)?.[1] ?? "";
+  const dollarResult = extractMonthlyDollarPercent(ariaLabel);
+  const percent = dollarResult
+    ? dollarResult.percent
+    : (extractOllamaUsagePercent(trackHtml) ?? extractInnerWidthPercent(trackHtml));
+  if (percent === null) return null;
+
+  const segments = extractOllamaUsageSegments(trackHtml);
+  return {
+    usagePercent: percent,
+    resetAt: extractResetTime(trackHtml),
+    ...(dollarResult ? { currency: dollarResult.currency } : {}),
+    ...(segments.length > 0 ? { segments } : {}),
+  };
+}
+
+function extractOllamaPlanTier(html: string): string | null {
+  return html.match(/class="[^"]*capitalize[^"]*"[^>]*>([^<]*)</)?.[1]?.trim() || null;
+}
+
 function parseOllamaCloudSettingsHtml(html: string): OllamaCloudUsage | null {
   const parts = html.split(/\bdata-usage-track\b/);
   if (parts.length < 2) return null;
-  const extractTime = (text: string): string | null => {
-    const match = text.match(/class="[^"]*local-time[^"]*"[^>]*data-time="([^"]*)"/);
-    return match?.[1] || null;
-  };
+  const planTier = extractOllamaPlanTier(html);
+
+  // A single `data-usage-track` means the 2026-08-19+ single monthly-meter
+  // layout; two means the pre-redesign session+weekly layout.
+  if (parts.length === 2) {
+    const monthly = extractMonthlyWindow(parts[1]);
+    return monthly ? { monthly, planTier } : null;
+  }
+
   const sessionPercent = extractOllamaUsagePercent(parts[1]);
   const weeklyPercent = parts[2] ? extractOllamaUsagePercent(parts[2]) : null;
   if (sessionPercent === null && weeklyPercent === null) return null;
   return {
     ...(sessionPercent !== null
-      ? { session: { usagePercent: sessionPercent, resetAt: extractTime(parts[1]) } }
+      ? { session: { usagePercent: sessionPercent, resetAt: extractResetTime(parts[1]) } }
       : {}),
     ...(weeklyPercent !== null
-      ? { weekly: { usagePercent: weeklyPercent, resetAt: extractTime(parts[2]) } }
+      ? { weekly: { usagePercent: weeklyPercent, resetAt: extractResetTime(parts[2]) } }
       : {}),
-    planTier: html.match(/class="[^"]*capitalize[^"]*"[^>]*>([^<]*)</)?.[1]?.trim() || null,
+    planTier,
   };
 }
 
@@ -134,6 +216,33 @@ async function fetchOllamaCloudUsageFromSettings(
   };
 }
 
+const OLLAMA_QUOTA_WINDOW_DISPLAY_NAMES = {
+  session: "Session",
+  weekly: "Weekly",
+  monthly: "Monthly",
+} as const;
+
+function buildOllamaUsageQuota(
+  window: OllamaUsageWindow | OllamaMonthlyWindow,
+  displayName: string
+): UsageQuota {
+  const pct = toPercentage(window.usagePercent);
+  const quota: UsageQuota = {
+    used: pct,
+    total: 100,
+    remaining: Math.max(0, 100 - pct),
+    remainingPercentage: Math.max(0, 100 - pct),
+    resetAt: window.resetAt,
+    unlimited: false,
+    displayName,
+  };
+  if ("currency" in window && window.currency) quota.currency = window.currency;
+  if ("segments" in window && window.segments && window.segments.length > 0) {
+    quota.details = window.segments.map((segment) => ({ name: segment.name, used: segment.used }));
+  }
+  return quota;
+}
+
 export async function getOllamaCloudUsage(providerSpecificData?: JsonRecord) {
   const config = resolveOllamaCloudConfig(providerSpecificData);
   if (config.state === "none") {
@@ -148,19 +257,10 @@ export async function getOllamaCloudUsage(providerSpecificData?: JsonRecord) {
     const result = await fetchOllamaCloudUsageFromSettings(config);
     if (!result.usage) return { message: result.message || "Ollama Cloud quota data unavailable." };
     const quotas: Record<string, UsageQuota> = {};
-    for (const key of ["session", "weekly"] as const) {
+    for (const key of ["session", "weekly", "monthly"] as const) {
       const quota = result.usage[key];
       if (!quota) continue;
-      const pct = toPercentage(quota.usagePercent);
-      quotas[key] = {
-        used: pct,
-        total: 100,
-        remaining: Math.max(0, 100 - pct),
-        remainingPercentage: Math.max(0, 100 - pct),
-        resetAt: quota.resetAt,
-        unlimited: false,
-        displayName: key === "session" ? "Session" : "Weekly",
-      };
+      quotas[key] = buildOllamaUsageQuota(quota, OLLAMA_QUOTA_WINDOW_DISPLAY_NAMES[key]);
     }
     return {
       plan: result.usage.planTier ? `Ollama Cloud ${result.usage.planTier}` : "Ollama Cloud",
