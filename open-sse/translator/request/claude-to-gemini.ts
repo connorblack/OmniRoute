@@ -243,7 +243,25 @@ export function claudeToGeminiRequest(model, body, stream, credentials = null) {
   // ── Thinking config ────────────────────────────────────────────
   // Priority: thinking.budget_tokens (Claude native) > output_config.effort (Claude Code).
   if (model.startsWith("gemma-4")) {
-    // gemma-4 models returns - 400: Thinking budget is not supported for this model
+    // gemma-4 models return 400 "Thinking budget is not supported for this model" for
+    // any thinkingBudget, and 400 "Thinking level is not supported for this model" for
+    // any thinkingLevel other than "minimal". Mirrors the same turn-it-down translation
+    // as openai-to-gemini.ts: an explicit off/zero request (Claude thinking disabled or
+    // a zero budget_tokens, or Claude Code's output_config.effort "none"/"minimal") maps
+    // to thinkingLevel: "minimal" instead of being dropped and leaving default thinking
+    // on (which can burn the whole output budget on thought tokens and return empty text).
+    const gemmaEffort =
+      typeof body.output_config?.effort === "string"
+        ? body.output_config.effort.toLowerCase()
+        : undefined;
+    const gemmaWantsThinkingOff =
+      gemmaEffort === "none" ||
+      gemmaEffort === "minimal" ||
+      body.thinking?.type === "disabled" ||
+      (body.thinking?.type === "enabled" && body.thinking.budget_tokens === 0);
+    if (gemmaWantsThinkingOff) {
+      result.generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
+    }
   } else if (body.thinking?.type === "enabled" && typeof body.thinking.budget_tokens === "number") {
     // typeof check ensures only numeric budget_tokens triggers the thinking path;
     // non-numeric values (e.g. string "auto") fall through to the effort-based path.

@@ -72,3 +72,94 @@ test("non-gemma gemini model: reasoning_effort STILL produces a thinkingConfig (
     "non-gemma Gemini models must keep receiving thinkingConfig"
   );
 });
+test("gemma-4 model: reasoning_effort none maps to thinkingLevel minimal (no thinkingBudget)", () => {
+  const result = openaiToGeminiRequest(
+    "gemma-4-31b-it",
+    {
+      model: "gemma-4-31b-it",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "none",
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.deepEqual(result.generationConfig?.thinkingConfig, { thinkingLevel: "minimal" });
+});
+
+test("gemma-4 model: reasoning_effort minimal also maps to thinkingLevel minimal", () => {
+  const result = openaiToGeminiRequest(
+    "gemma-4-31b-it",
+    {
+      model: "gemma-4-31b-it",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "minimal",
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.deepEqual(result.generationConfig?.thinkingConfig, { thinkingLevel: "minimal" });
+});
+
+test("gemma-4 model: Claude-shape thinking disabled maps to thinkingLevel minimal", () => {
+  const result = openaiToGeminiRequest(
+    "gemma-4-31b-it",
+    {
+      model: "gemma-4-31b-it",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "disabled" },
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.deepEqual(result.generationConfig?.thinkingConfig, { thinkingLevel: "minimal" });
+});
+
+test("gemma-4 model: Claude-shape thinking enabled with a zero budget maps to thinkingLevel minimal", () => {
+  const result = openaiToGeminiRequest(
+    "gemma-4-31b-it",
+    {
+      model: "gemma-4-31b-it",
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "enabled", budget_tokens: 0 },
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.deepEqual(result.generationConfig?.thinkingConfig, { thinkingLevel: "minimal" });
+});
+
+test("gemma-4 model: no reasoning param at all still produces no thinkingConfig", () => {
+  const result = openaiToGeminiRequest(
+    "gemma-4-31b-it",
+    {
+      model: "gemma-4-31b-it",
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.equal(result.generationConfig?.thinkingConfig, undefined);
+});
+
+test("non-gemma gemini model: reasoning_effort none keeps the numeric thinkingBudget off-switch (unaffected by the gemma-4 branch)", () => {
+  const result = openaiToGeminiRequest(
+    "gemini-3.8-flash",
+    {
+      model: "gemini-3.8-flash",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "none",
+      stream: false,
+    },
+    false
+  ) as GeminiRequestResult;
+
+  assert.deepEqual(result.generationConfig?.thinkingConfig, {
+    thinkingBudget: 0,
+    includeThoughts: false,
+  });
+});
