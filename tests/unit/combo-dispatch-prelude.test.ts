@@ -29,13 +29,14 @@ const {
   tryRuntimeUnitDispatch,
 } = await import("../../open-sse/services/combo/dispatchPrelude.ts");
 const { resolveComboSetupConfig } = await import("../../open-sse/services/comboConfig.ts");
-const { resolveComboRuntimeUnits } =
+const { resolveComboRuntimeUnits, resolveComboTargets } =
   await import("../../open-sse/services/combo/comboStructure.ts");
 const { recordStickyWeightedSuccess } = await import("../../open-sse/services/combo/rrState.ts");
 const { createProviderConnection } = await import("../../src/lib/db/providers.ts");
 const { invalidateDbCache } = await import("../../src/lib/db/readCache.ts");
 const { recordSessionModelUsage, getLastSessionModel } =
   await import("../../src/lib/db/contextHandoffs.ts");
+const semaphore = await import("../../open-sse/services/rateLimitSemaphore.ts");
 const core = await import("../../src/lib/db/core.ts");
 
 /**
@@ -621,6 +622,7 @@ test("tryPinnedModelDispatch: a same-tier sibling answers and becomes the new pi
     pinnedModel: `${TIER_PROVIDER}/a1`,
     allCombos: [root, tierA, tierB],
     config: ctx.config,
+    strategy: "priority",
     effectiveSessionId: sessionId,
     clientRequestedStream: false,
     handleSingleModelWithTimeout: async (_body, modelStr) => {
@@ -671,6 +673,7 @@ test("tryPinnedModelDispatch: whole tier fails → falls through without moving 
     pinnedModel: `${TIER_PROVIDER}/a1`,
     allCombos: [root, tierA, tierB],
     config: ctx.config,
+    strategy: "priority",
     effectiveSessionId: sessionId,
     clientRequestedStream: false,
     handleSingleModelWithTimeout: async (_body, modelStr) => {
@@ -703,6 +706,130 @@ test("tryPinnedModelDispatch: whole tier fails → falls through without moving 
     `${TIER_PROVIDER}/a1`,
     "the pin is unchanged — the next turn retries the original pin and its tier"
   );
+});
+
+test("tryPinnedModelDispatch: a pinned attempt on a round-robin target holds the concurrency slot, so a concurrent unpinned request sees saturation", async () => {
+  const combo: ComboInput = {
+    name: "rr-pin-holds-slot",
+    strategy: "round-robin",
+    models: [{ model: `${HEALTHY_PROVIDER}/live` }],
+    config: { concurrencyPerModel: 1, queueTimeoutMs: 5000 },
+  };
+  const ctx = setup(combo);
+  await seedHealthyPinProvider();
+  const [target] = resolveComboTargets(ctx.combo, [ctx.combo], 3);
+  const key = `combo:${ctx.combo.name}:${target.executionKey}`;
+
+  let releasePinned: (() => void) | null = null;
+  const pinnedInFlight = new Promise<Response>((resolve) => {
+    releasePinned = () => resolve(okResponse("pinned answer"));
+  });
+
+  const dispatchPromise = tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${HEALTHY_PROVIDER}/live`,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    strategy: "round-robin",
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async () => pinnedInFlight,
+    log: ctx.log,
+  });
+
+  // Give the pinned attempt a tick to acquire its semaphore slot before a
+  // competing unpinned request probes the same gate.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await assert.rejects(
+    () => semaphore.acquire(key, { maxConcurrency: 1, timeoutMs: 50 }),
+    (err: Error & { code?: string }) => err.code === "SEMAPHORE_TIMEOUT",
+    "concurrencyPerModel: 1 must be saturated by the in-flight PINNED request"
+  );
+
+  releasePinned?.();
+  const result = await dispatchPromise;
+  assert.ok(result.response, "the pinned attempt itself must still succeed once its turn comes");
+});
+
+test("tryPinnedModelDispatch: a pinned round-robin attempt that finds the slot full falls back without moving the pin", async () => {
+  const combo: ComboInput = {
+    name: "rr-pin-queue-full",
+    strategy: "round-robin",
+    models: [{ model: `${HEALTHY_PROVIDER}/live` }],
+    config: { concurrencyPerModel: 1, queueTimeoutMs: 30, queueDepth: 0 },
+  };
+  const ctx = setup(combo);
+  await seedHealthyPinProvider();
+  const [target] = resolveComboTargets(ctx.combo, [ctx.combo], 3);
+  const key = `combo:${ctx.combo.name}:${target.executionKey}`;
+  // Occupy the combo's only slot from outside — queueDepth: 0 means the
+  // pinned attempt's own acquire must fail immediately (SEMAPHORE_QUEUE_FULL)
+  // rather than wait.
+  const holdRelease = await semaphore.acquire(key, { maxConcurrency: 1 });
+
+  let dispatched = false;
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${HEALTHY_PROVIDER}/live`,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    strategy: "round-robin",
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async () => {
+      dispatched = true;
+      return okResponse("should not happen");
+    },
+    log: ctx.log,
+  });
+  holdRelease();
+
+  assert.equal(
+    res.response,
+    null,
+    "a full/timed-out slot must be treated as the pinned target being unavailable (Bug2 rule 2)"
+  );
+  assert.equal(res.suppressPinRecording, true, "falls back per Bug1's rules — the pin must not move");
+  assert.equal(dispatched, false, "the pinned model must never be dispatched while its slot is unavailable");
+  assert.ok(
+    ctx.records.some((r) => r.level === "warn" && r.msg.includes("queue full")),
+    "the queue-full/timeout must be observable in the log"
+  );
+});
+
+test("tryPinnedModelDispatch: releases the round-robin slot when the pinned attempt throws or aborts", async () => {
+  const combo: ComboInput = {
+    name: "rr-pin-release-on-error",
+    strategy: "round-robin",
+    models: [{ model: `${HEALTHY_PROVIDER}/live` }],
+    config: { concurrencyPerModel: 1 },
+  };
+  const ctx = setup(combo);
+  await seedHealthyPinProvider();
+  const [target] = resolveComboTargets(ctx.combo, [ctx.combo], 3);
+  const key = `combo:${ctx.combo.name}:${target.executionKey}`;
+
+  for (const failure of [
+    () => Promise.reject(new Error("connection reset")),
+    () => Promise.reject(new DOMException("aborted", "AbortError")),
+  ]) {
+    const res = await tryPinnedModelDispatch({
+      body: ctx.body,
+      combo: ctx.combo,
+      pinnedModel: `${HEALTHY_PROVIDER}/live`,
+      allCombos: [ctx.combo],
+      config: ctx.config,
+      strategy: "round-robin",
+      clientRequestedStream: false,
+      handleSingleModelWithTimeout: failure,
+      log: ctx.log,
+    });
+    assert.equal(res.response, null);
+    // If the slot had leaked, this fresh acquire (maxConcurrency: 1) would
+    // have had to queue/timeout instead of resolving immediately.
+    const release = await semaphore.acquire(key, { maxConcurrency: 1, timeoutMs: 50 });
+    release();
+  }
 });
 
 /* ------------------------------------------------------------------------- *

@@ -16,12 +16,13 @@ import { getCachedProviderConnections } from "../../../src/lib/db/readCache";
 import { recordSessionModelUsage } from "../../../src/lib/db/contextHandoffs.ts";
 import { getCircuitBreaker } from "../../../src/shared/utils/circuitBreaker";
 import { fisherYatesShuffle, getNextFromDeck } from "../../../src/shared/utils/shuffleDeck";
+import { normalizeRoutingStrategy } from "../../../src/shared/constants/routingStrategies.ts";
 import { handleFusionChat, type FusionTuning } from "../fusion.ts";
 import { getResolvedModelCapabilities } from "../modelCapabilities.ts";
 import { errorResponseWithComboDiagnostics } from "../../utils/error.ts";
 import { parseModel } from "../model.ts";
 import { handlePipelineChat, type PipelineStep } from "../pipeline.ts";
-import type { resolveComboSetupConfig } from "../comboConfig.ts";
+import { resolveComboQueueDepth, resolveComboSetupConfig } from "../comboConfig.ts";
 import { clampComboDepth, clampGlobalAttempts, resolveDelayMs } from "./comboPredicates.ts";
 import {
   deriveRequestCompatibilityRequirements,
@@ -32,6 +33,8 @@ import {
 import { isComboModelVisible } from "./comboVisibility.ts";
 import { buildFusionHandleSingleModel, extractFusionPanelSpec } from "./fusionPanel.ts";
 import { expandTargetsForAllStrategies } from "./connectionAwareExpansion.ts";
+import { makeConnectionConcurrencyResolver } from "./concurrencyCaps.ts";
+import * as semaphore from "../rateLimitSemaphore.ts";
 import {
   expandComboSystemPromptIfPresent,
   resolveTargetFingerprint,
@@ -309,6 +312,109 @@ export function resolvePinnedTier(
   return [pinnedTarget, ...siblings];
 }
 
+function findComboByName(allCombos: ComboCollectionLike | undefined, name: string): ComboLike | null {
+  const list: ComboLike[] = Array.isArray(allCombos)
+    ? (allCombos as ComboLike[])
+    : ((allCombos as { combos?: ComboLike[] } | undefined)?.combos ?? []);
+  return list.find((c) => c?.name === name) ?? null;
+}
+
+type PinnedSemaphoreGate = {
+  key: string;
+  maxConcurrency: number;
+  timeoutMs: number;
+  maxQueueSize: number;
+};
+
+async function buildSemaphoreGate(
+  rrCombo: ComboLike,
+  rrConfig: Record<string, unknown>,
+  executionKey: string,
+  connectionId: string | null
+): Promise<PinnedSemaphoreGate> {
+  // Mirrors roundRobinCombo.ts's own concurrency/queue resolution exactly
+  // (#9158 clamp, #3872 queue depth) so a pinned attempt and a live
+  // round-robin attempt for the same target share one gate.
+  const baseConcurrency = Math.min(Math.max(Number(rrConfig.concurrencyPerModel ?? 3), 1), 32);
+  const resolveTargetConcurrency = makeConnectionConcurrencyResolver(baseConcurrency);
+  return {
+    key: `combo:${rrCombo.name}:${executionKey}`,
+    maxConcurrency: await resolveTargetConcurrency(connectionId),
+    timeoutMs: Number(rrConfig.queueTimeoutMs ?? 30000),
+    maxQueueSize: resolveComboQueueDepth(rrConfig),
+  };
+}
+
+/**
+ * The semaphore gate a LIVE (unpinned) round-robin dispatch of `member` would
+ * use — same key format and limits roundRobinCombo.ts computes
+ * (`combo:${name}:${executionKey}`, concurrencyPerModel/queueTimeoutMs/
+ * queueDepth). Pinned dispatch used to bypass roundRobinCombo.ts entirely, so
+ * a pinned session's in-flight request was invisible to the per-model
+ * concurrency cap it enforces. Returns null when neither the combo being
+ * dispatched nor the single nested tier `member` runs under is round-robin —
+ * there is no gate for a pinned attempt to join.
+ *
+ * Resolves at most one level of nesting (the combo-ref tier `member` lives
+ * directly under, matching resolvePinnedTier's own tier boundary).
+ */
+async function resolvePinnedRoundRobinGate(args: {
+  combo: ComboLike;
+  strategy: string;
+  member: ResolvedComboTarget;
+  allCombos?: ComboCollectionLike;
+  config: ComboSetupConfig;
+  settings?: Record<string, unknown> | null;
+  hiddenModelsByProvider?: HiddenModelsByProvider;
+}): Promise<PinnedSemaphoreGate | null> {
+  const { combo, strategy, member, allCombos, config, settings, hiddenModelsByProvider } = args;
+  const rootConfig = config as unknown as Record<string, unknown>;
+
+  if (strategy === "round-robin") {
+    return buildSemaphoreGate(combo, rootConfig, member.executionKey, member.connectionId);
+  }
+
+  // Not round-robin at the root — `member` may still live inside a nested
+  // round-robin TIER (a combo-ref run under nestedComboMode "execute"; see
+  // resolvePinnedTier).
+  const sep = member.executionKey.indexOf(">");
+  if (sep === -1 || !allCombos) return null;
+  if (normalizeNestedComboMode(config.nestedComboMode) !== "execute") return null;
+
+  const tierStepId = member.executionKey.slice(0, sep);
+  const units = resolveComboRuntimeUnits(
+    combo,
+    allCombos,
+    "execute",
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const tierUnit = units.find((u) => u.executionKey === tierStepId);
+  if (!tierUnit || tierUnit.kind !== "combo-ref") return null;
+
+  const nestedCombo = findComboByName(allCombos, tierUnit.comboName);
+  if (!nestedCombo) return null;
+  if (normalizeRoutingStrategy(nestedCombo.strategy || "priority") !== "round-robin") return null;
+
+  // Fresh (path-less) resolution — a nested combo dispatched via `execute`
+  // mode runs itself from scratch (its own handleComboChat/handleRoundRobinCombo
+  // call), so its OWN executionKeys are NOT prefixed by the parent's tier step.
+  const nestedTargets = resolveComboTargets(
+    nestedCombo,
+    allCombos,
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const localTarget = nestedTargets.find((t) => t.modelStr === member.modelStr);
+  if (!localTarget) return null;
+
+  const nestedConfig = resolveComboSetupConfig(nestedCombo, settings ?? null) as unknown as Record<
+    string,
+    unknown
+  >;
+  return buildSemaphoreGate(nestedCombo, nestedConfig, localTarget.executionKey, localTarget.connectionId);
+}
+
 /**
  * Dispatch one pinned-tier member (the pin itself, or a same-tier sibling)
  * and validate the response the same way the pinned path always has. Returns
@@ -372,7 +478,9 @@ async function attemptPinnedMember(args: {
 
 /**
  * Context-cache pin routing (Fix #679), extended so one transient failure
- * cannot permanently move a session's pin:
+ * cannot permanently move a session's pin, and so a pinned attempt for a
+ * round-robin target is subject to the same concurrency cap an unpinned one
+ * would be:
  *
  *  1. Try the pinned target. On failure/unavailability, try the OTHER
  *     members of its tier (resolvePinnedTier) — a same-tier sibling may
@@ -383,6 +491,12 @@ async function attemptPinnedMember(args: {
  *     the next turn must retry the original pin and its tier. A flat combo
  *     (or a combo-ref not run under nestedComboMode "execute") has no tier
  *     siblings, so this degrades to "the pin alone".
+ *  3. A pinned attempt for a target that belongs to a round-robin combo (or
+ *     the single nested round-robin tier it runs inside) acquires that
+ *     target's concurrency semaphore slot first — same key, same limits an
+ *     unpinned dispatch would use — so in-flight pinned sessions count
+ *     against the cap. A full/timed-out slot is treated as that member
+ *     having failed (falls through to the next tier member, or to rule 2).
  *
  * The consecutive-failure auto-clear (failureTracker.ts, comboAttemptLoop.ts)
  * is unaffected by this and needs no changes: it only fires from the normal
@@ -403,8 +517,11 @@ export async function tryPinnedModelDispatch(args: {
   pinnedModel: string;
   allCombos?: ComboCollectionLike;
   config: ComboSetupConfig;
-  /** Needed to re-pin a tier sibling when it answers (rule 1). */
+  /** Root combo's own strategy — used only to detect the round-robin case (rule 3). */
+  strategy?: string;
+  /** Needed to re-pin a tier sibling (rule 1) and to resolve a nested tier's config (rule 3). */
   effectiveSessionId?: string | null;
+  settings?: Record<string, unknown> | null;
   clientRequestedStream: boolean;
   handleSingleModelWithTimeout: HandleSingleModel;
   log: ComboLogger;
@@ -416,7 +533,9 @@ export async function tryPinnedModelDispatch(args: {
     pinnedModel,
     allCombos,
     config,
+    strategy = "priority",
     effectiveSessionId = null,
+    settings = null,
     clientRequestedStream,
     handleSingleModelWithTimeout,
     log,
@@ -483,34 +602,72 @@ export async function tryPinnedModelDispatch(args: {
       continue;
     }
 
-    log.info(
-      "COMBO",
-      isPrimary
-        ? `Bypassing strategy — routing directly to pinned context model: ${memberModelStr}`
-        : `Trying tier sibling for pinned context model: ${memberModelStr}`
-    );
-    const accepted = await attemptPinnedMember({
-      modelStr: memberModelStr,
-      member,
-      body,
-      combo,
-      clientRequestedStream,
-      config,
-      handleSingleModelWithTimeout,
-      log,
-    });
-    if (accepted) {
-      if (!isPrimary && effectiveSessionId) {
-        recordSessionModelUsage(
-          effectiveSessionId,
-          combo.name,
-          memberModelStr,
-          member?.provider ?? parseModel(memberModelStr).provider ?? "unknown",
-          member?.connectionId ?? undefined
-        );
-        log.info("COMBO", `Context cache: re-pinned within tier ${pinnedModel} -> ${memberModelStr}`);
+    let release: (() => void) | null = null;
+    if (member) {
+      const gate = await resolvePinnedRoundRobinGate({
+        combo,
+        strategy,
+        member,
+        allCombos,
+        config,
+        settings,
+        hiddenModelsByProvider,
+      });
+      if (gate) {
+        try {
+          release = await semaphore.acquire(gate.key, {
+            maxConcurrency: gate.maxConcurrency,
+            timeoutMs: gate.timeoutMs,
+            maxQueueSize: gate.maxQueueSize,
+          });
+        } catch (err) {
+          const code = (err as { code?: string } | null | undefined)?.code;
+          log.warn(
+            "COMBO",
+            `${isPrimary ? "Pinned" : "Tier sibling"} model ${memberModelStr} round-robin slot ${
+              code === "SEMAPHORE_QUEUE_FULL" ? "queue full" : "timed out"
+            } — treating as unavailable`
+          );
+          continue;
+        }
       }
-      return { response: accepted, suppressPinRecording: false };
+    }
+
+    try {
+      log.info(
+        "COMBO",
+        isPrimary
+          ? `Bypassing strategy — routing directly to pinned context model: ${memberModelStr}`
+          : `Trying tier sibling for pinned context model: ${memberModelStr}`
+      );
+      const accepted = await attemptPinnedMember({
+        modelStr: memberModelStr,
+        member,
+        body,
+        combo,
+        clientRequestedStream,
+        config,
+        handleSingleModelWithTimeout,
+        log,
+      });
+      if (accepted) {
+        if (!isPrimary && effectiveSessionId) {
+          recordSessionModelUsage(
+            effectiveSessionId,
+            combo.name,
+            memberModelStr,
+            member?.provider ?? parseModel(memberModelStr).provider ?? "unknown",
+            member?.connectionId ?? undefined
+          );
+          log.info(
+            "COMBO",
+            `Context cache: re-pinned within tier ${pinnedModel} -> ${memberModelStr}`
+          );
+        }
+        return { response: accepted, suppressPinRecording: false };
+      }
+    } finally {
+      release?.();
     }
   }
 
