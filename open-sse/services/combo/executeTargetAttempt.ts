@@ -552,10 +552,14 @@ export async function executeTargetAttempt(opts: {
         );
       }
 
-      // Universal handoff: record model usage for session
+      // Universal handoff: record model usage for session. This writes the same
+      // session_model_history row the context-cache pin reads, so it honors
+      // `suppressSessionPinRecording` too; otherwise a suppressed fallback
+      // still moves the pin.
       if (
         universalHandoffConfig.enabled &&
         deps.relayOptions?.sessionId &&
+        !deps.suppressSessionPinRecording &&
         !(deps.body as Record<string, unknown>)?.[SKIP_UNIVERSAL_HANDOFF_FLAG]
       ) {
         const prevModel = getLastSessionModel(deps.relayOptions.sessionId, deps.combo.name);

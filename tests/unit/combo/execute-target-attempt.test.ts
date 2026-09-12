@@ -358,10 +358,9 @@ test("injection: dropping fallbackAttempts from the dispatch target goes red", a
  * Context-cache pin suppression (one-transient-failure-should-not-
  * permanently-move-the-pin fix). tryPinnedModelDispatch (dispatchPrelude.ts)
  * sets deps.suppressSessionPinRecording when it fell through after
- * exhausting the pinned target's whole tier — this is the ONLY place that
- * flag is meant to change behavior: the context_cache_protection
- * recordSessionModelUsage call below, guarded the same way the ccp write
- * always has been.
+ * exhausting the pinned target's whole tier. The flag gates both
+ * session_model_history writes: the context_cache_protection write and the
+ * universal handoff write, since the pin is read from that table.
  * ------------------------------------------------------------------------- */
 
 function goodResponse(content: string): Response {
@@ -441,5 +440,44 @@ test("context-cache pin: records normally when suppressSessionPinRecording is un
     getLastSessionModel(sessionId, comboName),
     "openai/gpt-4o",
     "without suppression a success records the new pin exactly as before this fix"
+  );
+});
+
+test("context-cache pin: suppressSessionPinRecording also skips the universal handoff write", async () => {
+  const { executeTargetAttempt } =
+    await import("../../../open-sse/services/combo/executeTargetAttempt.ts");
+  const { recordSessionModelUsage, getLastSessionModel } =
+    await import("../../../src/lib/db/contextHandoffs.ts");
+
+  const sessionId = "sess-suppress-handoff";
+  const comboName = "ccp-combo-suppressed-handoff";
+  recordSessionModelUsage(sessionId, comboName, "openai/gpt-4o-original", "openai");
+
+  const target = modelTarget({ modelStr: "openai/gpt-4o", provider: "openai", connectionId: "c-new" });
+  const deps = baseDeps({
+    combo: { name: comboName, models: [], context_cache_protection: true },
+    effectiveSessionId: sessionId,
+    relayOptions: { sessionId },
+    suppressSessionPinRecording: true,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async () => goodResponse("a good, non-empty answer"),
+  });
+  const state = emptyState({
+    orderedTargets: [target],
+    abortControllers: new Map([[0, new AbortController()]]),
+  });
+  const result = await executeTargetAttempt({
+    index: 0,
+    state,
+    deps,
+    targetForAttempt: target,
+    profile: {},
+    protectedPriorityTarget: false,
+  });
+  assert.equal(result?.ok, true);
+  assert.equal(
+    getLastSessionModel(sessionId, comboName),
+    "openai/gpt-4o-original",
+    "the universal handoff write must not move a suppressed pin"
   );
 });

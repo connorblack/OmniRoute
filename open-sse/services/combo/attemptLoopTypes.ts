@@ -109,9 +109,10 @@ export type AttemptLoopDeps = {
    * Set when tryPinnedModelDispatch fell through after exhausting the pinned
    * target's whole tier (dispatchPrelude.ts) — this turn's successful attempt
    * must not overwrite the session's context-cache pin (one-transient-
-   * failure-should-not-permanently-move-the-pin). Only gates the
-   * context_cache_protection recordSessionModelUsage call in
-   * executeTargetAttempt.ts; universal handoff pinning is unaffected.
+   * failure-should-not-permanently-move-the-pin). Gates both
+   * recordSessionModelUsage writes in executeTargetAttempt.ts (context-cache
+   * and universal handoff), since both write the session_model_history row
+   * the pin is read from.
    */
   suppressSessionPinRecording?: boolean;
 };
