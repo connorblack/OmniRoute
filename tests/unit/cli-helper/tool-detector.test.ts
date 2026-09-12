@@ -1,5 +1,8 @@
-import { describe, it, before } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import * as toolDetector from "../../../src/lib/cli-helper/tool-detector.ts";
 
 // The Hermes tool detector honors a HERMES_HOME env var (#3628) and only falls
@@ -110,6 +113,78 @@ describe("tool-detector", () => {
         openclaw!.configPath.includes(".openclaw/openclaw.json"),
         `expected configPath to include '.openclaw/openclaw.json', got: ${openclaw!.configPath}`
       );
+    });
+  });
+
+  describe("configured — public base URL (gateway), not just localhost:20128", () => {
+    let configHome: string;
+    let previousConfigHome: string | undefined;
+    let previousPublicBaseUrl: string | undefined;
+
+    before(() => {
+      previousConfigHome = process.env.CLI_CONFIG_HOME;
+      previousPublicBaseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+      configHome = path.join(os.homedir(), "tmp-cli-config-home-tool-detector-test");
+      fs.mkdirSync(path.join(configHome, ".claude"), { recursive: true });
+      fs.writeFileSync(
+        path.join(configHome, ".claude", "settings.json"),
+        JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://gateway.dev.sellie.ai" } })
+      );
+      process.env.CLI_CONFIG_HOME = configHome;
+      process.env.NEXT_PUBLIC_BASE_URL = "https://gateway.dev.sellie.ai";
+    });
+
+    after(() => {
+      if (previousConfigHome === undefined) delete process.env.CLI_CONFIG_HOME;
+      else process.env.CLI_CONFIG_HOME = previousConfigHome;
+      if (previousPublicBaseUrl === undefined) delete process.env.NEXT_PUBLIC_BASE_URL;
+      else process.env.NEXT_PUBLIC_BASE_URL = previousPublicBaseUrl;
+      fs.rmSync(configHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it("reports configured=true when the config points at the gateway's public base URL", async () => {
+      const result = await toolDetector.detectTool("claude");
+      assert.ok(result !== null);
+      assert.strictEqual(result!.configured, true);
+    });
+  });
+
+  describe("hermes-agent roles — omni-route provider and gateway base_url", () => {
+    let hermesHome: string;
+    let previousHermesHome: string | undefined;
+    let previousPublicBaseUrl: string | undefined;
+
+    before(() => {
+      previousHermesHome = process.env.HERMES_HOME;
+      previousPublicBaseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+      hermesHome = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-hermes-home-"));
+      fs.writeFileSync(
+        path.join(hermesHome, "config.yaml"),
+        [
+          "model:",
+          "  default: some-model",
+          "  provider: omni-route",
+          "  base_url: https://gateway.dev.sellie.ai/v1",
+          "",
+        ].join("\n")
+      );
+      process.env.HERMES_HOME = hermesHome;
+      process.env.NEXT_PUBLIC_BASE_URL = "https://gateway.dev.sellie.ai";
+    });
+
+    after(() => {
+      if (previousHermesHome === undefined) delete process.env.HERMES_HOME;
+      else process.env.HERMES_HOME = previousHermesHome;
+      if (previousPublicBaseUrl === undefined) delete process.env.NEXT_PUBLIC_BASE_URL;
+      else process.env.NEXT_PUBLIC_BASE_URL = previousPublicBaseUrl;
+      fs.rmSync(hermesHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    });
+
+    it("marks the default role as usingOmniRoute for provider omni-route + gateway base_url", async () => {
+      const result = await toolDetector.detectTool("hermes-agent");
+      assert.ok(result !== null);
+      assert.ok(result!.hermesAgentRoles, "expected hermesAgentRoles to be populated");
+      assert.strictEqual(result!.hermesAgentRoles!.default.usingOmniRoute, true);
     });
   });
 });

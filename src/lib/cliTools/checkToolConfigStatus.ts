@@ -8,6 +8,7 @@ import {
   resolveGrokBuildConfigPath,
 } from "@/shared/services/grokBuildConfig";
 import { getRuntimePorts } from "@/lib/runtime/ports";
+import { resolveOmniRouteBaseUrl } from "@/shared/utils/resolveOmniRouteBaseUrl";
 
 const { apiPort } = getRuntimePorts();
 
@@ -33,6 +34,7 @@ export async function checkToolConfigStatus(
     if (!configPath) return "unknown";
 
     const content = await fs.readFile(configPath, "utf-8");
+    const publicBaseUrl = resolveOmniRouteBaseUrl().toLowerCase();
 
     if (toolId === "grok-build") {
       const settings = parseGrokBuildConfig(content);
@@ -49,7 +51,8 @@ export async function checkToolConfigStatus(
       const hasOmniRoute =
         lower.includes("omniroute") ||
         lower.includes(`localhost:${apiPort}`) ||
-        lower.includes(`127.0.0.1:${apiPort}`);
+        lower.includes(`127.0.0.1:${apiPort}`) ||
+        lower.includes(publicBaseUrl);
       if (!hasOmniRoute) return "not_configured";
 
       // Also verify auth.json has an API key (not masked/empty)
@@ -73,7 +76,8 @@ export async function checkToolConfigStatus(
       const hasOmniRoute =
         lower.includes("omniroute") ||
         lower.includes(`localhost:${apiPort}`) ||
-        lower.includes(`127.0.0.1:${apiPort}`);
+        lower.includes(`127.0.0.1:${apiPort}`) ||
+        lower.includes(publicBaseUrl);
       return hasOmniRoute ? "configured" : "not_configured";
     }
 
@@ -97,7 +101,8 @@ export async function checkToolConfigStatus(
           configStr.includes("omniroute") ||
           configStr.includes("sk_omniroute") ||
           configStr.includes(`localhost:${apiPort}`) ||
-          configStr.includes(`127.0.0.1:${apiPort}`)
+          configStr.includes(`127.0.0.1:${apiPort}`) ||
+          configStr.includes(publicBaseUrl)
         ) {
           return "configured";
         }

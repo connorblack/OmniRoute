@@ -81,6 +81,95 @@ describe("CLI_TOOL_IDS", () => {
   });
 });
 
+// ─── antigravity / copilot / cursor-cli (unknown_tool regression) ─────────
+
+describe("antigravity, copilot, cursor-cli runtime entries", () => {
+  it("are registered in the runtime catalog (not unknown_tool)", () => {
+    for (const id of ["antigravity", "copilot", "cursor-cli"]) {
+      assert.ok(CLI_TOOL_IDS.includes(id), `Missing runtime entry: ${id}`);
+    }
+  });
+
+  it("resolve command candidates instead of an empty list", async () => {
+    const { getCliToolCommandCandidates } = await import(
+      "../../src/shared/services/cliRuntime.ts"
+    );
+    assert.deepEqual(getCliToolCommandCandidates("antigravity"), ["agy"]);
+    assert.deepEqual(getCliToolCommandCandidates("copilot"), ["copilot"]);
+    assert.deepEqual(getCliToolCommandCandidates("cursor-cli"), ["cursor-agent", "agent"]);
+  });
+
+  it("do not report unknown_tool from getCliRuntimeStatus", async () => {
+    for (const id of ["antigravity", "copilot", "cursor-cli"]) {
+      const result = await getCliRuntimeStatus(id);
+      assert.notEqual(result.reason, "unknown_tool", `${id} should be a known tool`);
+    }
+  });
+});
+
+// ─── CLI_MODE=host prefers CLI_EXTRA_PATHS over known/bundled paths ───────
+
+describe("CLI_MODE=host binary resolution preference", () => {
+  if (process.platform === "win32") return;
+
+  let fakeHome;
+  let extraDir;
+  let knownScript;
+  let extraScript;
+  let previousHome;
+  let previousMode;
+  let previousExtra;
+  let previousBin;
+
+  before(() => {
+    previousHome = process.env.HOME;
+    previousMode = process.env.CLI_MODE;
+    previousExtra = process.env.CLI_EXTRA_PATHS;
+    previousBin = process.env.CLI_CLAUDE_BIN;
+    delete process.env.CLI_CLAUDE_BIN;
+
+    fakeHome = createTempDir();
+    const knownDir = path.join(fakeHome, ".local", "bin");
+    fs.mkdirSync(knownDir, { recursive: true });
+    knownScript = createFile(knownDir, "claude", "#!/bin/sh\necho 'bundled 1.0.0'\n");
+
+    extraDir = createTempDir();
+    extraScript = createFile(
+      extraDir,
+      "claude",
+      "#!/bin/sh\necho 'host 2.0.0'\n# PADDING_PADDING_PAD\n"
+    );
+
+    process.env.HOME = fakeHome;
+    process.env.CLI_EXTRA_PATHS = extraDir;
+  });
+
+  after(() => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousMode === undefined) delete process.env.CLI_MODE;
+    else process.env.CLI_MODE = previousMode;
+    if (previousExtra === undefined) delete process.env.CLI_EXTRA_PATHS;
+    else process.env.CLI_EXTRA_PATHS = previousExtra;
+    if (previousBin === undefined) delete process.env.CLI_CLAUDE_BIN;
+    else process.env.CLI_CLAUDE_BIN = previousBin;
+    fs.rmSync(fakeHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(extraDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it("resolves the CLI_EXTRA_PATHS binary over the known-path one when CLI_MODE=host", async () => {
+    process.env.CLI_MODE = "host";
+    const result = await getCliRuntimeStatus("claude");
+    assert.equal(result.commandPath, extraScript);
+  });
+
+  it("keeps preferring the known-path binary in auto mode (default)", async () => {
+    delete process.env.CLI_MODE;
+    const result = await getCliRuntimeStatus("claude");
+    assert.equal(result.commandPath, knownScript);
+  });
+});
+
 describe("CLI tool id compatibility aliases", () => {
   it("normalizes legacy binary names without creating duplicate ids", () => {
     assert.equal(normalizeCliToolId("kilocode"), "kilo");
@@ -365,5 +454,19 @@ describe("resolveOpencodeConfigPath — cross-platform", () => {
     );
 
     assert.equal(result, jsoncPath);
+  });
+
+  it("honors CLI_CONFIG_HOME by default, like the other tools' config paths (#opencode-config-home)", async () => {
+    const previous = process.env.CLI_CONFIG_HOME;
+    const configHome = path.join(os.homedir(), "tmp-cli-config-home-opencode-test");
+    process.env.CLI_CONFIG_HOME = configHome;
+    try {
+      const { getOpenCodeConfigPath } = await import("../../src/shared/services/cliRuntime.ts");
+      const result = getOpenCodeConfigPath();
+      assert.equal(result, path.join(configHome, ".config", "opencode", "opencode.json"));
+    } finally {
+      if (previous === undefined) delete process.env.CLI_CONFIG_HOME;
+      else process.env.CLI_CONFIG_HOME = previous;
+    }
   });
 });

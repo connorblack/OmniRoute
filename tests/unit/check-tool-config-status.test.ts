@@ -109,6 +109,48 @@ test("hermes: returns 'not_configured' when config points elsewhere", async () =
   assert.equal(result, "not_configured");
 });
 
+// ── Public base URL (gateway) markers ───────────────────────────────────────
+
+test("codex: returns 'configured' when TOML points at NEXT_PUBLIC_BASE_URL instead of localhost", async () => {
+  const previous = process.env.NEXT_PUBLIC_BASE_URL;
+  process.env.NEXT_PUBLIC_BASE_URL = "https://gateway.dev.sellie.ai";
+  try {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "omniroute-codex-gateway-"));
+    const configPath = path.join(tmpDir, "config.toml");
+    await fs.writeFile(
+      configPath,
+      `[openai]\nbase_url = "https://gateway.dev.sellie.ai/v1"\napi_key_env = "OPENAI_API_KEY"\n`,
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(tmpDir, "auth.json"),
+      JSON.stringify({ OPENAI_API_KEY: "sk_omniroute_testkey_1234567890abcdef" }),
+      "utf-8"
+    );
+    const result = await checkToolConfigStatus("codex", configPath);
+    assert.equal(result, "configured");
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_BASE_URL;
+    else process.env.NEXT_PUBLIC_BASE_URL = previous;
+  }
+});
+
+test("droid: returns 'configured' when JSON config points at NEXT_PUBLIC_BASE_URL instead of localhost", async () => {
+  const previous = process.env.NEXT_PUBLIC_BASE_URL;
+  process.env.NEXT_PUBLIC_BASE_URL = "https://gateway.dev.sellie.ai";
+  try {
+    const configPath = await writeTempFile(
+      "droid.json",
+      JSON.stringify({ apiKey: "sk-test", baseUrl: "https://gateway.dev.sellie.ai/v1" })
+    );
+    const result = await checkToolConfigStatus("droid", configPath);
+    assert.equal(result, "configured");
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_BASE_URL;
+    else process.env.NEXT_PUBLIC_BASE_URL = previous;
+  }
+});
+
 test("grok-build: requires the managed default and chat completions backend", async () => {
   const configured = await writeTempFile(
     "config.toml",

@@ -14,6 +14,7 @@ import {
   shouldUseShellForCommand,
 } from "../../shared/services/cliRuntime";
 import { resolveOpencodeConfigPath } from "../../shared/services/opencodeConfigPath";
+import { resolveOmniRouteBaseUrl } from "../../shared/utils/resolveOmniRouteBaseUrl";
 
 const execFileAsync = promisify(execFile);
 let execFileImpl = execFileAsync;
@@ -170,7 +171,8 @@ export async function detectTool(id: string): Promise<DetectedTool | null> {
       : getCliPrimaryConfigPath(tool.id) ||
         (tool.id === "opencode" ? resolveOpencodeConfigPath() : "");
   const configContents = await readConfigFile(configPath);
-  const configured = !!configContents && isConfigured(configContents, "http://localhost:20128");
+  const configured =
+    !!configContents && isConfigured(configContents, resolveOmniRouteBaseUrl());
 
   const result: DetectedTool = {
     id: canonicalId,
@@ -187,12 +189,15 @@ export async function detectTool(id: string): Promise<DetectedTool | null> {
     try {
       const roles = await getCurrentHermesAgentRoles();
       const richRoles: Record<string, any> = {};
+      const publicBaseUrl = resolveOmniRouteBaseUrl();
 
       Object.entries(roles).forEach(([role, info]) => {
         const usingOmni =
           info?.provider === "omniroute" ||
+          info?.provider === "omni-route" ||
           (info?.base_url || "").includes("20128") ||
-          (info?.base_url || "").includes("localhost:20128");
+          (info?.base_url || "").includes("localhost:20128") ||
+          (info?.base_url || "").includes(publicBaseUrl);
 
         richRoles[role] = {
           model: info.model,
