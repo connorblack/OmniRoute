@@ -8,7 +8,10 @@
  * DATA_DIR-scoped directory via `runNpm` (Hard Rule #13: no shell
  * interpolation, array args + `env` option only) — never a git-clone+build.
  *
- * Binary location: $DATA_DIR/services/mux/node_modules/mux/dist/cli/index.js
+ * Binary location: resolved from node_modules/mux/package.json's "bin" field
+ * (mux@0.28.5+ is a thin compat package — bin: {"mux": "bin/mux.js"} — with no
+ * dist/ of its own), falling back to the legacy
+ * node_modules/mux/dist/cli/index.js path for older installs.
  * Data dir:         $DATA_DIR/services/mux/data  (MUX_HOME — mux's own state)
  * DB row:            version_manager WHERE tool = 'mux'
  */
@@ -40,12 +43,35 @@ export interface SpawnArgs {
 let latestVersionCache: { value: string; expiresAt: number } | null = null;
 const VERSION_CACHE_TTL_MS = 3_600_000;
 
-function getServerPath(): string {
-  return path.join(MUX_INSTALL_DIR, "node_modules", "mux", "dist", "cli", "index.js");
-}
-
 function getInstalledPkgPath(): string {
   return path.join(MUX_INSTALL_DIR, "node_modules", "mux", "package.json");
+}
+
+/**
+ * Resolve the mux CLI entry point from its installed package.json "bin"
+ * field (string form, or object form under the "mux" key), relative to
+ * the package dir. Falls back to the legacy dist/cli/index.js path when
+ * package.json is missing or has no usable bin — mux versions before
+ * 0.28.5 shipped a real dist/ build with no "bin" entry of their own.
+ */
+export function resolveMuxBinPath(packageDir: string): string {
+  try {
+    const raw = fs.readFileSync(path.join(packageDir, "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as { bin?: string | Record<string, string> };
+    const bin = pkg.bin;
+    const binRelPath =
+      typeof bin === "string" ? bin : bin && typeof bin === "object" ? bin.mux : undefined;
+    if (typeof binRelPath === "string" && binRelPath.length > 0) {
+      return path.join(packageDir, binRelPath);
+    }
+  } catch {
+    // fall through to legacy path
+  }
+  return path.join(packageDir, "dist", "cli", "index.js");
+}
+
+function getServerPath(): string {
+  return resolveMuxBinPath(path.join(MUX_INSTALL_DIR, "node_modules", "mux"));
 }
 
 export async function getInstalledVersion(): Promise<string | null> {
