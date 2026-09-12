@@ -409,6 +409,26 @@ export class CodexAppServerExecutor extends BaseExecutor {
       const running = run();
       const collected = await events.collect();
       await running;
+      // An `error` event with no usable output (no text, no tool call) is a hard
+      // turn failure, not a completion — surface it as a real HTTP error instead
+      // of folding it into a 200 JSON body. Otherwise chatCore's malformed-200
+      // detector sees `output: []` and reports a misleading empty-response error
+      // (reason=empty_choices), hiding the actual upstream failure (e.g. the
+      // app-server's Codex CLI not being logged in).
+      const errorEvent = collected.find(
+        (e): e is Extract<AdapterEvent, { type: "error" }> => e.type === "error"
+      );
+      const hasOutput = collected.some((e) => e.type === "text_delta" || e.type === "tool_call_start");
+      if (errorEvent && !hasOutput) {
+        return {
+          response: errorResponse(
+            errorEvent.status ?? 502,
+            errorEvent.message,
+            errorEvent.code ?? "codex_app_server_turn_failed"
+          ),
+          url: config.url,
+        };
+      }
       const response = buildResponseJSON(collected, input.model, {
         toolNsMap: toolMaps.namespace,
         freeformToolNames: toolMaps.freeform,

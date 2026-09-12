@@ -431,6 +431,88 @@ test("CodexAppServerExecutor: non-streaming turn returns a JSON Response", async
   assert.ok(Array.isArray(body.output));
 });
 
+// Regression guard: a normal successful turn's non-streaming body shape must not
+// shift when the error-surfacing path below is added alongside it.
+test("CodexAppServerExecutor: non-streaming success keeps its 200 JSON body shape", async () => {
+  const ctrl = makeFakeSocket();
+  const { fn } = fakeTransport(ctrl);
+  const executor = new CodexAppServerExecutor({ websocketFn: fn });
+
+  const originalSend = ctrl.socket.send;
+  ctrl.socket.send = (data: string) => {
+    originalSend(data);
+    const frame = JSON.parse(data) as Record<string, unknown>;
+    if (frame.id == null || !frame.method) return;
+    queueMicrotask(() => {
+      if (frame.method === "thread/start") {
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: { threadId: "thr_1" } });
+      } else if (frame.method === "turn/start") {
+        ctrl.emit({
+          jsonrpc: "2.0",
+          method: "item/agentMessage/delta",
+          params: { delta: "Hi" },
+        });
+        ctrl.emit({ jsonrpc: "2.0", method: "turn/completed", params: { turn: {} } });
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: {} });
+      } else {
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: {} });
+      }
+    });
+  };
+
+  const result = await executor.execute(makeExecuteInput({ stream: false }));
+  const response = "response" in result ? result.response : result;
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("Content-Type") ?? "", /application\/json/);
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(body.object, "response");
+  assert.equal(body.status, "completed");
+  assert.equal(body.model, "gpt-5.5");
+  assert.equal(typeof body.id, "string");
+  assert.ok(Array.isArray(body.output));
+  assert.equal((body.output as unknown[]).length, 1);
+  assert.equal("error" in body, false);
+  assert.ok(body.usage && typeof body.usage === "object");
+});
+
+test("CodexAppServerExecutor: non-streaming turn with an error and no output returns a real error Response", async () => {
+  const ctrl = makeFakeSocket();
+  const { fn } = fakeTransport(ctrl);
+  const executor = new CodexAppServerExecutor({ websocketFn: fn });
+
+  const originalSend = ctrl.socket.send;
+  ctrl.socket.send = (data: string) => {
+    originalSend(data);
+    const frame = JSON.parse(data) as Record<string, unknown>;
+    if (frame.id == null || !frame.method) return;
+    queueMicrotask(() => {
+      if (frame.method === "thread/start") {
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: { threadId: "thr_1" } });
+      } else if (frame.method === "turn/start") {
+        // Simulate the app-server's Codex CLI not being logged in: the turn dies
+        // immediately with an `error` notification, no agentMessage/tool-call output.
+        ctrl.emit({
+          jsonrpc: "2.0",
+          method: "error",
+          params: { error: { message: "Not logged in" } },
+        });
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: {} });
+      } else {
+        ctrl.emit({ jsonrpc: "2.0", id: frame.id, result: {} });
+      }
+    });
+  };
+
+  const result = await executor.execute(makeExecuteInput({ stream: false }));
+  const response = "response" in result ? result.response : result;
+  assert.notEqual(response.status, 200);
+  assert.equal(response.status, 502);
+  const body = (await response.json()) as Record<string, unknown>;
+  const error = body.error as Record<string, unknown>;
+  assert.equal(error.code, "codex_app_server_turn_failed");
+  assert.match(String(error.message), /not logged in/i);
+});
+
 // ── Tool path: INBOUND advertise + OUTBOUND passthrough ──────────────────────
 
 test("dynamicToolWireName: flattens namespaced tools, passes plain ones through", () => {
