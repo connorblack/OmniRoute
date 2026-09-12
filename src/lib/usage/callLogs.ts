@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { RequestPipelinePayloads } from "@omniroute/open-sse/utils/requestLogger.ts";
 import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/errorSanitization.ts";
 import { getDbInstance } from "../db/core";
@@ -135,11 +136,8 @@ type DeleteResult = {
   deletedArtifacts: number;
 };
 
-let logIdCounter = 0;
-
 function generateLogId() {
-  logIdCounter++;
-  return `${Date.now()}-${logIdCounter}`;
+  return `${Date.now()}-${randomUUID()}`;
 }
 
 async function resolveAccountName(connectionId: string | null | undefined) {
