@@ -93,6 +93,52 @@ test("cost — excludes OPEN-breaker candidates even if cheaper", () => {
   assert.equal(getStrategy("cost").select(pool, ctx).provider, "ok");
 });
 
+test("cost — spreads uniformly across candidates tied at the cheapest price", (t) => {
+  const pool = [
+    cand({ provider: "shared", connectionId: "conn-a", costPer1MTokens: 1 }),
+    cand({ provider: "shared", connectionId: "conn-b", costPer1MTokens: 1 }),
+    cand({ provider: "shared", connectionId: "conn-c", costPer1MTokens: 1 }),
+  ];
+  const randomValues = [0, 0.34, 0.67, 0.99, 0.5];
+  let i = 0;
+  t.mock.method(Math, "random", () => randomValues[i++ % randomValues.length]);
+
+  const picked = new Set(
+    randomValues.map(() => getStrategy("cost").select(pool, ctx).connectionId)
+  );
+
+  assert.deepEqual([...picked].sort(), ["conn-a", "conn-b", "conn-c"]);
+});
+
+test("cost — a strictly cheaper candidate always wins regardless of the random draw", (t) => {
+  const pool = [
+    cand({ provider: "cheapest", connectionId: "conn-cheap", costPer1MTokens: 1 }),
+    cand({ provider: "pricier", connectionId: "conn-pricier", costPer1MTokens: 2 }),
+    cand({ provider: "pricier2", connectionId: "conn-pricier2", costPer1MTokens: 3 }),
+  ];
+
+  for (const draw of [0, 0.5, 0.999]) {
+    t.mock.method(Math, "random", () => draw);
+    assert.equal(getStrategy("cost").select(pool, ctx).connectionId, "conn-cheap");
+  }
+});
+
+test("cost — an OPEN-breaker candidate is excluded even when tied on price with healthy ones", (t) => {
+  const pool = [
+    cand({ provider: "open-tied", connectionId: "conn-open", costPer1MTokens: 1, circuitBreakerState: "OPEN" }),
+    cand({ provider: "healthy-a", connectionId: "conn-a", costPer1MTokens: 1 }),
+    cand({ provider: "healthy-b", connectionId: "conn-b", costPer1MTokens: 1 }),
+    cand({ provider: "healthy-c", connectionId: "conn-c", costPer1MTokens: 2 }),
+  ];
+
+  for (const draw of [0, 0.5, 0.99]) {
+    t.mock.method(Math, "random", () => draw);
+    const decision = getStrategy("cost").select(pool, ctx);
+    assert.notEqual(decision.connectionId, "conn-open");
+    assert.equal(decision.candidatesConsidered, 3);
+  }
+});
+
 test("cost — 'eco' alias resolves to the cost strategy", () => {
   assert.equal(getStrategy("eco").name, "cost");
 });

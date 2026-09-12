@@ -145,6 +145,12 @@ class ScoreStrategyImpl implements RouterStrategy {
 
 // ── CostStrategy: always picks cheapest healthy provider ─────────────────────
 
+// Auto-combo expands one candidate per connection, and every key on the
+// same provider/model shares a price, so a plain cost sort ties constantly.
+// Breaking ties by pool order always kept the priority-1 connection (see
+// #cost-router-tie-break); pick uniformly among the tied cheapest instead.
+const COST_TIE_EPSILON = 1e-9;
+
 class CostStrategyImpl implements RouterStrategy {
   readonly name = "cost";
   readonly description = "Always selects cheapest available provider (by costPer1MTokens)";
@@ -153,13 +159,23 @@ class CostStrategyImpl implements RouterStrategy {
     const healthy = pool.filter((c) => c.circuitBreakerState !== "OPEN");
     const candidates = healthy.length > 0 ? healthy : pool;
     const sorted = [...candidates].sort((a, b) => a.costPer1MTokens - b.costPer1MTokens);
-    const best = sorted[0];
-    if (!best) throw new Error("[CostStrategy] No candidates available");
+    const cheapest = sorted[0];
+    if (!cheapest) throw new Error("[CostStrategy] No candidates available");
+
+    let tieCount = 1;
+    while (
+      tieCount < sorted.length &&
+      Math.abs(sorted[tieCount].costPer1MTokens - cheapest.costPer1MTokens) <= COST_TIE_EPSILON
+    ) {
+      tieCount += 1;
+    }
+    const best = tieCount === 1 ? cheapest : sorted[Math.floor(Math.random() * tieCount)];
+
     return {
       provider: best.provider,
       model: best.model,
       strategy: this.name,
-      reason: `CostStrategy: cheapest at $${best.costPer1MTokens.toFixed(3)}/1M tokens`,
+      reason: `CostStrategy: cheapest at $${best.costPer1MTokens.toFixed(3)}/1M tokens${tieCount > 1 ? ` (1 of ${tieCount} tied)` : ""}`,
       candidatesConsidered: candidates.length,
       finalScore: best.costPer1MTokens === 0 ? 1.0 : 1 / best.costPer1MTokens,
       connectionId: best.connectionId,
