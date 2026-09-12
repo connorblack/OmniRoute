@@ -754,7 +754,17 @@ export async function getCallLogs(filter: any = {}) {
   pushLikeFilter(conditions, params, "correlation_id", "correlationId", filter.correlationId);
   pushLikeFilter(conditions, params, "session_tag", "sessionTag", filter.sessionTag);
   if (filter.combo) {
-    conditions.push("cl.combo_name IS NOT NULL");
+    // `true`/"1" is a historical presence sentinel (HTTP callers send the
+    // string "1" via URLSearchParams, direct callers pass the boolean): the
+    // combo dashboard tile and RequestLoggerV2's quick filter pair it with a
+    // `search` (or client-side) name check rather than a literal combo named
+    // "1". Any other value is an exact combo name.
+    if (filter.combo === "1" || filter.combo === true) {
+      conditions.push("cl.combo_name IS NOT NULL");
+    } else {
+      conditions.push("cl.combo_name = @combo");
+      params.combo = String(filter.combo);
+    }
   }
   if (filter.excludeTests) {
     // Home "Recent Requests" is an allowlist of real provider inference, not a

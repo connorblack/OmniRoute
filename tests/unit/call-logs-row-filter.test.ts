@@ -73,16 +73,29 @@ test.describe("call-logs rowMatchesFilter unit tests", () => {
     );
   });
 
-  test("combo filter is a presence flag, not a name query", () => {
-    // The dashboard's Combo tab sends combo=1 and the SQL clause is
-    // `combo_name IS NOT NULL` -- the value is never compared. Substring-matching
-    // "1" against the name kept only combos whose name happens to contain a "1".
+  test("combo=1 is a presence flag, not a name query", () => {
+    // The dashboard's Combo tab and RequestLoggerV2's quick filter send
+    // combo=1 (paired with `search` or a client-side name check) to mean "any
+    // combo assigned" -- the SQL clause is `combo_name IS NOT NULL`. The
+    // literal string "1" must not be compared against combo_name.
     assert.equal(rowMatchesFilter(persistedRow, { combo: "1" }), true);
     assert.equal(
       rowMatchesFilter({ ...persistedRow, comboName: "Fast Lane" }, { combo: "1" }),
       true
     );
     assert.equal(rowMatchesFilter({ ...persistedRow, comboName: null }, { combo: "1" }), false);
+  });
+
+  test("combo=<name> filters by exact combo name", () => {
+    // #2565-style regression: querying combo=<name> for any of the 41 live combo
+    // names returned the same newest-5000 rows regardless of which name was
+    // requested, because the clause only checked "has a combo", never which one.
+    assert.equal(rowMatchesFilter(persistedRow, { combo: "SmartRouter" }), true);
+    assert.equal(
+      rowMatchesFilter({ ...persistedRow, comboName: "Fast Lane" }, { combo: "SmartRouter" }),
+      false
+    );
+    assert.equal(rowMatchesFilter({ ...persistedRow, comboName: null }, { combo: "SmartRouter" }), false);
   });
 
   test("model filter matches the requested model, as the SQL clause does", () => {

@@ -78,8 +78,14 @@ export function rowMatchesFilter(row: any, filter: Record<string, any>): boolean
   ) {
     return false;
   }
-  if (filter.combo && row?.comboName == null) {
-    return false;
+  if (filter.combo) {
+    // Mirror buildCallLogFilterSql(): "1"/true is the presence sentinel (any
+    // combo assigned), any other value is an exact combo name match.
+    if (filter.combo === "1" || filter.combo === true) {
+      if (row?.comboName == null) return false;
+    } else if (String(row?.comboName ?? "") !== String(filter.combo)) {
+      return false;
+    }
   }
   if (
     filter.correlationId &&
