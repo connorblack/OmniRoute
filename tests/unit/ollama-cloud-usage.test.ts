@@ -189,3 +189,116 @@ test("getUsageForProvider reports expired Ollama Cloud cookies on redirect", asy
     else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
   }
 });
+
+test("getUsageForProvider parses the redesigned single monthly-meter settings page (post-2026-08-19)", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCookie = process.env.OLLAMA_USAGE_COOKIE;
+  const originalOmniCookie = process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+  delete process.env.OLLAMA_USAGE_COOKIE;
+  process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = "test-cookie";
+
+  // Trimmed fixture modeled on the real ollama.com/settings redesign: one
+  // `data-usage-track` with a dollar-denominated aria-label, the fill
+  // percentage on the inner child div, per-model `data-usage-segment`
+  // buttons, and a reset caption right after the meter.
+  globalThis.fetch = async () =>
+    new Response(
+      [
+        '<h2><span>Included usage</span>',
+        '<span class="capitalize">max</span></h2>',
+        "<div>",
+        '<div class="flex justify-between mb-2"><span>Monthly usage</span><span>$207.95 of $300 used</span></div>',
+        '<div data-usage-meter>',
+        '<div data-usage-bubble aria-hidden="true"><span data-usage-model></span><span data-usage-requests></span></div>',
+        '<div data-usage-track aria-label="Monthly usage $207.95 of $300 used">',
+        '<div style="width: 69.3%; ">',
+        '<button type="button" style="width: 0.2%; background: #22c55e" data-usage-segment data-model="gemma4:31b" data-requests="127" aria-label="gemma4:31b: 127 requests"></button>',
+        '<button type="button" style="width: 24.8%; background: #4f46e5" data-usage-segment data-model="deepseek-v4-flash:0731" data-requests="13376" aria-label="deepseek-v4-flash:0731: 13376 requests"></button>',
+        "</div>",
+        "</div>",
+        "</div>",
+        '<div data-time="2026-10-08T06:24:07Z">Resets in 3 weeks.</div>',
+        "</div>",
+      ].join(""),
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+
+  try {
+    const result = (await usage.getUsageForProvider({
+      id: "ollama-cloud-monthly",
+      provider: "ollama-cloud",
+      apiKey: "ollama-chat-key",
+    })) as {
+      plan?: string;
+      quotas?: Record<
+        string,
+        {
+          used: number;
+          total: number;
+          remainingPercentage: number;
+          resetAt: string | null;
+          displayName?: string;
+          currency?: string;
+          details?: Array<{ name: string; used: number }>;
+        }
+      >;
+    };
+
+    assert.equal(result.plan, "Ollama Cloud max");
+    assert.deepEqual(Object.keys(result.quotas ?? {}), ["monthly"]);
+
+    const monthly = result.quotas!.monthly;
+    // 207.95 / 300 * 100, rounded to match the observed 69.3% fill.
+    assert.ok(Math.abs(monthly.used - 69.316666) < 0.01, `expected ~69.32, got ${monthly.used}`);
+    assert.equal(monthly.total, 100);
+    assert.ok(Math.abs(monthly.remainingPercentage - 30.683333) < 0.01);
+    assert.equal(monthly.resetAt, "2026-10-08T06:24:07Z");
+    assert.equal(monthly.displayName, "Monthly");
+    assert.equal(monthly.currency, "USD");
+    assert.deepEqual(monthly.details, [
+      { name: "gemma4:31b", used: 127 },
+      { name: "deepseek-v4-flash:0731", used: 13376 },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
+    else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
+    if (originalOmniCookie === undefined) delete process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+    else process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = originalOmniCookie;
+  }
+});
+
+test("getUsageForProvider falls back to the inner width when the monthly aria-label has no dollar amounts", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCookie = process.env.OLLAMA_USAGE_COOKIE;
+  process.env.OLLAMA_USAGE_COOKIE = "test-cookie";
+
+  globalThis.fetch = async () =>
+    new Response(
+      [
+        '<span class="capitalize">free</span>',
+        '<div data-usage-track aria-label="Monthly usage">',
+        '<div style="width: 42.5%; ">',
+        '<button type="button" style="width: 10%" data-usage-segment data-model="qwen3:8b" data-requests="9"></button>',
+        "</div>",
+        "</div>",
+        '<div data-time="2026-11-01T00:00:00.000Z">Resets in 3 weeks.</div>',
+      ].join(""),
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+
+  try {
+    const result = (await usage.getUsageForProvider({
+      id: "ollama-cloud-monthly-width-fallback",
+      provider: "ollama-cloud",
+      apiKey: "ollama-chat-key",
+    })) as { quotas?: Record<string, { used: number; resetAt: string | null }> };
+
+    assert.equal(result.quotas!.monthly.used, 42.5);
+    assert.equal(result.quotas!.monthly.resetAt, "2026-11-01T00:00:00.000Z");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
+    else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
+  }
+});
