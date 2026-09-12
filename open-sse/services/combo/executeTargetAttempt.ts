@@ -533,9 +533,14 @@ export async function executeTargetAttempt(opts: {
       // (independent of universal handoff — always fires when context_cache_protection is on)
       // #3825: write under the SAME effectiveSessionId used by the read site so a
       // sessionless conversation re-pins to this model on its next turn.
+      // `suppressSessionPinRecording` is set only when tryPinnedModelDispatch
+      // (dispatchPrelude.ts) exhausted the pinned target's whole tier and fell
+      // through to this normal attempt loop — that turn's answer must not
+      // move the pin, so the next turn retries the original pin and its tier.
       if (
         deps.combo.context_cache_protection &&
         deps.effectiveSessionId &&
+        !deps.suppressSessionPinRecording &&
         !(deps.body as Record<string, unknown>)?.[SKIP_UNIVERSAL_HANDOFF_FLAG]
       ) {
         recordSessionModelUsage(

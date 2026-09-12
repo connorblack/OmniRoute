@@ -13,6 +13,7 @@
  * Extracted from combo.ts as a pure move (#3501). No behaviour change.
  */
 import { getCachedProviderConnections } from "../../../src/lib/db/readCache";
+import { recordSessionModelUsage } from "../../../src/lib/db/contextHandoffs.ts";
 import { getCircuitBreaker } from "../../../src/shared/utils/circuitBreaker";
 import { fisherYatesShuffle, getNextFromDeck } from "../../../src/shared/utils/shuffleDeck";
 import { handleFusionChat, type FusionTuning } from "../fusion.ts";
@@ -60,6 +61,7 @@ import type {
   IsModelAvailable,
   HiddenModelsByProvider,
   NestedComboMode,
+  ResolvedComboTarget,
   ResolvedComboUnit,
   SingleModelTarget,
 } from "./types.ts";
@@ -257,9 +259,142 @@ async function evaluatePinnedResponse(args: {
   return null;
 }
 
+export type PinnedDispatchResult = {
+  /** The pin's (or a same-tier sibling's) response — return it as-is when set. */
+  response: Response | null;
+  /**
+   * True when the pinned target's entire tier was unavailable and a
+   * DIFFERENT, out-of-tier target is about to serve this turn through the
+   * combo's normal strategy (the one-transient-failure-permanently-moves-
+   * the-pin bug). The caller must let that fallback answer the turn WITHOUT
+   * recording it as the new session pin — the next turn has to retry the
+   * original pin (and its tier) rather than getting stuck on whatever
+   * happened to answer once. Only meaningful when `response` is null: a
+   * stale pin (name no longer in the combo at all) returns `false` here —
+   * there is no tier to retry, so the fallback naturally becomes the pin,
+   * same as before this fix.
+   */
+  suppressPinRecording: boolean;
+};
+
 /**
- * Context-cache pin routing (Fix #679). Returns the pinned model's response when
- * it is honored AND usable; returns null to fall through to the combo strategy.
+ * Resolve the pinned target's "tier": itself, plus any sibling targets that
+ * should be tried — and may be re-pinned to — before the session falls all
+ * the way through to the combo's normal strategy.
+ *
+ * comboStructure.ts's buildExecutionKey builds a leaf's executionKey as
+ * `[...path, stepId].join(">")`, and `path` only grows when the resolver
+ * descends into a combo-ref (resolveNestedComboTargets / expandRuntimeStep).
+ * So a target nested under a top-level combo-ref carries that step's id as
+ * the first `>`-separated segment of its executionKey; a direct (flat)
+ * member's key has none. That segment is exactly the "unit"
+ * tryRuntimeUnitDispatch treats as one black box when nestedComboMode is
+ * "execute" — reuse it as the tier boundary. Outside execute mode a
+ * combo-ref's members are flattened as ordinary independent targets (no unit
+ * semantics), so the pinned target's tier is itself alone — same as a flat
+ * combo.
+ */
+export function resolvePinnedTier(
+  comboTargets: ResolvedComboTarget[],
+  pinnedTarget: ResolvedComboTarget,
+  nestedComboMode: NestedComboMode
+): ResolvedComboTarget[] {
+  if (nestedComboMode !== "execute") return [pinnedTarget];
+  const sep = pinnedTarget.executionKey.indexOf(">");
+  if (sep === -1) return [pinnedTarget];
+  const tierPrefix = pinnedTarget.executionKey.slice(0, sep + 1);
+  const siblings = comboTargets.filter(
+    (t) => t.executionKey !== pinnedTarget.executionKey && t.executionKey.startsWith(tierPrefix)
+  );
+  return [pinnedTarget, ...siblings];
+}
+
+/**
+ * Dispatch one pinned-tier member (the pin itself, or a same-tier sibling)
+ * and validate the response the same way the pinned path always has. Returns
+ * the accepted Response, or null when the member should be considered failed
+ * (throw, transient status, quality rejection) — the caller decides what to
+ * try next.
+ */
+async function attemptPinnedMember(args: {
+  modelStr: string;
+  member: ResolvedComboTarget | null;
+  body: Record<string, unknown>;
+  combo: ComboLike;
+  clientRequestedStream: boolean;
+  config: ComboSetupConfig;
+  handleSingleModelWithTimeout: HandleSingleModel;
+  log: ComboLogger;
+}): Promise<Response | null> {
+  const {
+    modelStr,
+    member,
+    body,
+    combo,
+    clientRequestedStream,
+    config,
+    handleSingleModelWithTimeout,
+    log,
+  } = args;
+  let result: Response | null = null;
+  try {
+    // #5501: the combo system_message also expands on the pinned context path —
+    // a session pin bypasses the main loop, so without this the template would
+    // go literal from the second in-session request on. Target context comes
+    // from the member's resolved combo target when available.
+    const memberBody = expandComboSystemPromptIfPresent(body, combo, {
+      modelId: modelStr,
+      providerId: member && member.provider !== "unknown" ? member.provider : "",
+      account:
+        typeof member?.label === "string" && member.label.trim().length > 0
+          ? member.label.trim()
+          : "",
+      fingerprint: member ? (resolveTargetFingerprint(member) ?? "") : "",
+    });
+    result = await handleSingleModelWithTimeout(memberBody, modelStr, {
+      modelPinned: true,
+    } as SingleModelTarget);
+  } catch (err) {
+    log.warn(
+      "COMBO",
+      `Pinned model ${modelStr} threw error: ${err instanceof Error ? err.message : String(err)}, trying next tier member / falling through to combo retry/fallback`
+    );
+    return null;
+  }
+  return evaluatePinnedResponse({
+    pinnedResult: result,
+    pinnedModel: modelStr,
+    clientRequestedStream,
+    config,
+    log,
+  });
+}
+
+/**
+ * Context-cache pin routing (Fix #679), extended so one transient failure
+ * cannot permanently move a session's pin:
+ *
+ *  1. Try the pinned target. On failure/unavailability, try the OTHER
+ *     members of its tier (resolvePinnedTier) — a same-tier sibling may
+ *     become the new pin (`suppressPinRecording: false`).
+ *  2. When the whole tier is unavailable, fall through to the combo's normal
+ *     strategy for this turn only, but flag the caller to skip recording
+ *     that fallback's model as the new pin (`suppressPinRecording: true`) —
+ *     the next turn must retry the original pin and its tier. A flat combo
+ *     (or a combo-ref not run under nestedComboMode "execute") has no tier
+ *     siblings, so this degrades to "the pin alone".
+ *
+ * The consecutive-failure auto-clear (failureTracker.ts, comboAttemptLoop.ts)
+ * is unaffected by this and needs no changes: it only fires from the normal
+ * attempt loop that runs AFTER this function falls through, and that loop's
+ * OWN success is the only thing that calls recordSessionModelUsage again
+ * (guarded by `suppressSessionPinRecording`, see executeTargetAttempt.ts) —
+ * so once a streak clears the pin entirely (deleteSessionModelHistory), the
+ * next turn has no pin at all and a fresh successful attempt sets one, same
+ * as before this fix. Suppressing a single turn's pin-move (rule 2) never
+ * suppresses the failure counter itself, so a combo that keeps failing after
+ * exhausting its tier still clears via the existing threshold.
+ *
  * Caller must only invoke this when a pin is present.
  */
 export async function tryPinnedModelDispatch(args: {
@@ -268,17 +403,20 @@ export async function tryPinnedModelDispatch(args: {
   pinnedModel: string;
   allCombos?: ComboCollectionLike;
   config: ComboSetupConfig;
+  /** Needed to re-pin a tier sibling when it answers (rule 1). */
+  effectiveSessionId?: string | null;
   clientRequestedStream: boolean;
   handleSingleModelWithTimeout: HandleSingleModel;
   log: ComboLogger;
   hiddenModelsByProvider?: HiddenModelsByProvider;
-}): Promise<Response | null> {
+}): Promise<PinnedDispatchResult> {
   const {
     body,
     combo,
     pinnedModel,
     allCombos,
     config,
+    effectiveSessionId = null,
     clientRequestedStream,
     handleSingleModelWithTimeout,
     log,
@@ -295,13 +433,11 @@ export async function tryPinnedModelDispatch(args: {
   // when allCombos is authoritative (non-empty) so we can resolve combo-refs;
   // the auto-combo redirect path passes an empty list and keeps prior behavior.
   const haveFullCombos = Array.isArray(allCombos) ? allCombos.length > 0 : !!allCombos;
-  // Eagerly resolve the combo's targets once (used for the pin-validity check AND
-  // #5501 template expansion). A non-authoritative allCombos (empty/missing)
-  // resolves to the combo's direct targets only — same semantics as the original
-  // `!haveFullCombos ||` short-circuit, without feeding `[]` to the nested resolver.
-  // #5501 also needs these targets eagerly for the combo system_message expansion;
-  // the release refactor threads `hiddenModelsByProvider` through the resolver so
-  // hidden models stay filtered on both the pin-validity and expansion paths.
+  // Eagerly resolve the combo's targets once (used for the pin-validity check,
+  // tier resolution, AND #5501 template expansion). A non-authoritative
+  // allCombos (empty/missing) resolves to the combo's direct targets only —
+  // same semantics as the original `!haveFullCombos ||` short-circuit, without
+  // feeding `[]` to the nested resolver.
   const comboTargets = resolveComboTargets(
     combo,
     haveFullCombos ? allCombos : undefined,
@@ -309,66 +445,86 @@ export async function tryPinnedModelDispatch(args: {
     hiddenModelsByProvider
   );
   const pinInCombo = !haveFullCombos || comboTargets.some((t) => t.modelStr === pinnedModel);
-  // Honor the pin only if it is still a combo target AND its provider is not
-  // DURABLY down. Without the health gate a pin keeps routing a session to a
-  // dead/credits-exhausted/throttled account forever (strategy bypassed, no
-  // failover) — incident 2026-06-22: laila stuck on a throttled claude account
-  // and credits_exhausted accounts never failing over. A transient cooldown is
-  // tolerated (pin kept) so an unstable provider does not churn the pin.
-  const pinDurablyDown = pinInCombo ? await isPinnedModelDurablyUnhealthy(pinnedModel) : false;
-  if (pinInCombo && !pinDurablyDown) {
-    log.info(
+  if (!pinInCombo) {
+    log.warn(
       "COMBO",
-      `Bypassing strategy — routing directly to pinned context model: ${pinnedModel}`
+      `Stale context-cache pin "${pinnedModel}" not in combo "${combo.name}" targets — dropping pin, using strategy`
     );
-    let pinnedResult: Response | null = null;
-    try {
-      // #5501: the combo system_message also expands on the pinned context path —
-      // a session pin bypasses the main loop, so without this the template would
-      // go literal from the second in-session request on. Target context comes
-      // from the pinned model's resolved combo target when available.
-      const pinnedTarget = comboTargets.find((t) => t.modelStr === pinnedModel);
-      const pinnedBody = expandComboSystemPromptIfPresent(body, combo, {
-        modelId: pinnedModel,
-        providerId:
-          pinnedTarget && pinnedTarget.provider !== "unknown" ? pinnedTarget.provider : "",
-        account:
-          typeof pinnedTarget?.label === "string" && pinnedTarget.label.trim().length > 0
-            ? pinnedTarget.label.trim()
-            : "",
-        fingerprint: pinnedTarget ? (resolveTargetFingerprint(pinnedTarget) ?? "") : "",
-      });
-      pinnedResult = await handleSingleModelWithTimeout(pinnedBody, pinnedModel, {
-        modelPinned: true,
-      } as SingleModelTarget);
-    } catch (pinErr) {
+    return { response: null, suppressPinRecording: false };
+  }
+
+  // Honor the pin only if it (or a tier sibling) is not DURABLY down. Without
+  // the health gate a pin keeps routing a session to a dead/credits-exhausted/
+  // throttled account forever — incident 2026-06-22: laila stuck on a
+  // throttled claude account and credits_exhausted accounts never failing
+  // over. A transient cooldown is tolerated (pin kept) so an unstable
+  // provider does not churn the pin.
+  const pinnedTarget = comboTargets.find((t) => t.modelStr === pinnedModel) ?? null;
+  const nestedComboMode = normalizeNestedComboMode(config.nestedComboMode);
+  // Non-authoritative allCombos means comboTargets only has direct targets and
+  // pinnedTarget may be missing even though pinInCombo was forced true above —
+  // fall back to the pin alone (the original single-target behavior); tier and
+  // semaphore resolution both need real target/combo structure to work with.
+  const tierMembers: Array<ResolvedComboTarget | null> = pinnedTarget
+    ? resolvePinnedTier(comboTargets, pinnedTarget, nestedComboMode)
+    : [null];
+
+  for (const member of tierMembers) {
+    const memberModelStr = member ? member.modelStr : pinnedModel;
+    const isPrimary = memberModelStr === pinnedModel;
+
+    if (await isPinnedModelDurablyUnhealthy(memberModelStr)) {
       log.warn(
         "COMBO",
-        `Pinned model ${pinnedModel} threw error: ${pinErr instanceof Error ? pinErr.message : String(pinErr)}, falling through to combo retry/fallback`
+        isPrimary
+          ? `Context-cache pin "${memberModelStr}" provider durably unhealthy — trying its tier before dropping the pin`
+          : `Tier sibling "${memberModelStr}" provider durably unhealthy — skipping`
       );
+      continue;
     }
-    if (pinnedResult) {
-      const accepted = await evaluatePinnedResponse({
-        pinnedResult,
-        pinnedModel,
-        clientRequestedStream,
-        config,
-        log,
-      });
-      if (accepted) return accepted;
+
+    log.info(
+      "COMBO",
+      isPrimary
+        ? `Bypassing strategy — routing directly to pinned context model: ${memberModelStr}`
+        : `Trying tier sibling for pinned context model: ${memberModelStr}`
+    );
+    const accepted = await attemptPinnedMember({
+      modelStr: memberModelStr,
+      member,
+      body,
+      combo,
+      clientRequestedStream,
+      config,
+      handleSingleModelWithTimeout,
+      log,
+    });
+    if (accepted) {
+      if (!isPrimary && effectiveSessionId) {
+        recordSessionModelUsage(
+          effectiveSessionId,
+          combo.name,
+          memberModelStr,
+          member?.provider ?? parseModel(memberModelStr).provider ?? "unknown",
+          member?.connectionId ?? undefined
+        );
+        log.info("COMBO", `Context cache: re-pinned within tier ${pinnedModel} -> ${memberModelStr}`);
+      }
+      return { response: accepted, suppressPinRecording: false };
     }
-    // Fall through to the target iteration loop below — retries and sibling
-    // models will be tried via the normal combo machinery.
   }
+
   log.warn(
     "COMBO",
-    pinInCombo
-      ? `Context-cache pin "${pinnedModel}" provider durably unhealthy — dropping pin, using strategy`
-      : `Stale context-cache pin "${pinnedModel}" not in combo "${combo.name}" targets — dropping pin, using strategy`
+    tierMembers.length > 1
+      ? `Pinned target "${pinnedModel}" and its tier are all unavailable — using combo strategy for this turn without moving the pin`
+      : `Pinned target "${pinnedModel}" is unavailable — using combo strategy for this turn without moving the pin`
   );
-  // Fall through to the normal target iteration loop below — the pin is
-  // dropped, so the combo strategy picks the best available target.
-  return null;
+  // Fall through to the normal target iteration loop below. Every path above
+  // this point that reaches here tried (and lost) at least one tier member,
+  // so the caller must not let the fallback move the pin (rule 2/3) — only
+  // the stale-pin early return above skips a tier attempt entirely.
+  return { response: null, suppressPinRecording: true };
 }
 
 /**

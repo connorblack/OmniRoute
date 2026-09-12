@@ -353,3 +353,93 @@ test("injection: dropping fallbackAttempts from the dispatch target goes red", a
   });
   assert.equal(Object.prototype.hasOwnProperty.call(seen as object, "fallbackAttempts"), true);
 });
+
+/* ------------------------------------------------------------------------- *
+ * Context-cache pin suppression (one-transient-failure-should-not-
+ * permanently-move-the-pin fix). tryPinnedModelDispatch (dispatchPrelude.ts)
+ * sets deps.suppressSessionPinRecording when it fell through after
+ * exhausting the pinned target's whole tier — this is the ONLY place that
+ * flag is meant to change behavior: the context_cache_protection
+ * recordSessionModelUsage call below, guarded the same way the ccp write
+ * always has been.
+ * ------------------------------------------------------------------------- */
+
+function goodResponse(content: string): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+test("context-cache pin: suppressSessionPinRecording skips the pin write on an otherwise-successful attempt", async () => {
+  const { executeTargetAttempt } =
+    await import("../../../open-sse/services/combo/executeTargetAttempt.ts");
+  const { recordSessionModelUsage, getLastSessionModel } =
+    await import("../../../src/lib/db/contextHandoffs.ts");
+
+  const sessionId = "sess-suppress-1";
+  const comboName = "ccp-combo-suppressed";
+  // Seed the pin the way turn 1 would have — this is what must survive.
+  recordSessionModelUsage(sessionId, comboName, "openai/gpt-4o-original", "openai");
+
+  const target = modelTarget({ modelStr: "openai/gpt-4o", provider: "openai", connectionId: "c-new" });
+  const deps = baseDeps({
+    combo: { name: comboName, models: [], context_cache_protection: true },
+    effectiveSessionId: sessionId,
+    suppressSessionPinRecording: true,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async () => goodResponse("a good, non-empty answer"),
+  });
+  const state = emptyState({
+    orderedTargets: [target],
+    abortControllers: new Map([[0, new AbortController()]]),
+  });
+  const result = await executeTargetAttempt({
+    index: 0,
+    state,
+    deps,
+    targetForAttempt: target,
+    profile: {},
+    protectedPriorityTarget: false,
+  });
+  assert.equal(result?.ok, true, "the attempt itself must still succeed and be returned normally");
+  assert.equal(
+    getLastSessionModel(sessionId, comboName),
+    "openai/gpt-4o-original",
+    "suppressSessionPinRecording must leave the existing pin untouched"
+  );
+});
+
+test("context-cache pin: records normally when suppressSessionPinRecording is unset (regression guard)", async () => {
+  const { executeTargetAttempt } =
+    await import("../../../open-sse/services/combo/executeTargetAttempt.ts");
+  const { getLastSessionModel } = await import("../../../src/lib/db/contextHandoffs.ts");
+
+  const sessionId = "sess-suppress-2";
+  const comboName = "ccp-combo-unsuppressed";
+  const target = modelTarget({ modelStr: "openai/gpt-4o", provider: "openai", connectionId: "c-new" });
+  const deps = baseDeps({
+    combo: { name: comboName, models: [], context_cache_protection: true },
+    effectiveSessionId: sessionId,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async () => goodResponse("a good, non-empty answer"),
+  });
+  const state = emptyState({
+    orderedTargets: [target],
+    abortControllers: new Map([[0, new AbortController()]]),
+  });
+  const result = await executeTargetAttempt({
+    index: 0,
+    state,
+    deps,
+    targetForAttempt: target,
+    profile: {},
+    protectedPriorityTarget: false,
+  });
+  assert.equal(result?.ok, true);
+  assert.equal(
+    getLastSessionModel(sessionId, comboName),
+    "openai/gpt-4o",
+    "without suppression a success records the new pin exactly as before this fix"
+  );
+});

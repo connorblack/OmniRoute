@@ -34,6 +34,8 @@ const { resolveComboRuntimeUnits } =
 const { recordStickyWeightedSuccess } = await import("../../open-sse/services/combo/rrState.ts");
 const { createProviderConnection } = await import("../../src/lib/db/providers.ts");
 const { invalidateDbCache } = await import("../../src/lib/db/readCache.ts");
+const { recordSessionModelUsage, getLastSessionModel } =
+  await import("../../src/lib/db/contextHandoffs.ts");
 const core = await import("../../src/lib/db/core.ts");
 
 /**
@@ -56,6 +58,29 @@ async function seedHealthyPinProvider() {
   });
   invalidateDbCache();
   healthySeeded = true;
+}
+
+/**
+ * Provider shared by every model in the tiered-pin fixtures below. One healthy
+ * connection so `isPinnedModelDurablyUnhealthy` — which gates on the PROVIDER,
+ * not the individual model — never short-circuits the dispatch attempt; each
+ * tier test drives success/failure per model through `handleSingleModelWithTimeout`
+ * instead.
+ */
+const TIER_PROVIDER = "tierpin";
+let tierSeeded = false;
+
+async function seedTierProvider() {
+  if (tierSeeded) return;
+  await createProviderConnection({
+    provider: TIER_PROVIDER,
+    authType: "api-key",
+    name: "tier-pin-account",
+    isActive: true,
+    apiKey: "sk-test-tier-pin",
+  });
+  invalidateDbCache();
+  tierSeeded = true;
 }
 
 type ComboInput = Parameters<typeof resolveComboSetupConfig>[0];
@@ -362,7 +387,12 @@ test("tryPinnedModelDispatch: drops a stale pin (not in combo) and falls through
     },
     log: ctx.log,
   });
-  assert.equal(res, null, "a stale pin must fall through to the strategy");
+  assert.equal(res.response, null, "a stale pin must fall through to the strategy");
+  assert.equal(
+    res.suppressPinRecording,
+    false,
+    "a stale pin has no tier to retry — the fallback may become the new pin as before"
+  );
   assert.equal(dispatched, false, "a stale pin must never be dispatched");
   const warns = ctx.records.filter((r) => r.level === "warn" && r.msg.includes("Stale"));
   assert.equal(warns.length, 1);
@@ -394,7 +424,12 @@ test("tryPinnedModelDispatch: drops the pin when every connection for its provid
     },
     log: ctx.log,
   });
-  assert.equal(res, null);
+  assert.equal(res.response, null);
+  assert.equal(
+    res.suppressPinRecording,
+    true,
+    "the pin's (flat) tier was tried and lost — the fallback must not take over the pin"
+  );
   assert.equal(dispatched, false);
   const warns = ctx.records.filter(
     (r) => r.level === "warn" && r.msg.includes("durably unhealthy")
@@ -442,7 +477,7 @@ async function dispatchHealthyPin(
     },
     log: ctx.log,
   });
-  return { res, dispatched };
+  return { res: res.response, dispatched };
 }
 
 test("tryPinnedModelDispatch: serves the pinned response when the pin is healthy and the response is good", async () => {
@@ -486,7 +521,7 @@ test("tryPinnedModelDispatch: expands the combo system_message template on the p
     },
     log: ctx.log,
   });
-  assert.ok(res, "the healthy pin must be served");
+  assert.ok(res.response, "the healthy pin must be served");
   assert.deepEqual(seen, [`Model: ${HEALTHY_PROVIDER}/live`]);
 });
 
@@ -531,6 +566,142 @@ test("tryPinnedModelDispatch: falls through when the pinned dispatch throws", as
   assert.ok(
     ctx.records.some((r) => r.level === "warn" && r.msg.includes("threw error")),
     "a throwing pin must be logged and recovered from, not propagated"
+  );
+});
+
+/* ------------------------------------------------------------------------- *
+ * Tiered pin fallback (one-transient-failure-should-not-permanently-move-
+ * the-pin) + pinned/round-robin concurrency.
+ *
+ * `tierA`/`tierB` are nested combo-refs run under `nestedComboMode: "execute"`
+ * — tierA's two models are the pinned target's "tier" (resolvePinnedTier);
+ * tierB is a different tier the normal combo strategy could fall back to.
+ * ------------------------------------------------------------------------- */
+
+function tieredCombo(
+  name: string,
+  tierAName: string,
+  tierBName: string,
+  extraConfig: Record<string, unknown> = {}
+): ComboInput {
+  return {
+    name,
+    strategy: "priority",
+    models: [
+      { kind: "combo-ref", comboName: tierAName },
+      { kind: "combo-ref", comboName: tierBName },
+    ],
+    config: { nestedComboMode: "execute", ...extraConfig },
+  };
+}
+
+test("tryPinnedModelDispatch: a same-tier sibling answers and becomes the new pin when the pin fails (rule 1)", async () => {
+  await seedTierProvider();
+  const tierA: ComboInput = {
+    name: "tierA-sibling",
+    strategy: "priority",
+    models: [{ model: `${TIER_PROVIDER}/a1` }, { model: `${TIER_PROVIDER}/a2` }],
+    config: {},
+  };
+  const tierB: ComboInput = {
+    name: "tierB-sibling",
+    strategy: "priority",
+    models: [{ model: `${TIER_PROVIDER}/b1` }],
+    config: {},
+  };
+  const root = tieredCombo("root-sibling", tierA.name, tierB.name);
+  const ctx = setup(root);
+  const sessionId = "sess-tier-sibling";
+  recordSessionModelUsage(sessionId, root.name, `${TIER_PROVIDER}/a1`, TIER_PROVIDER);
+
+  const dispatched: string[] = [];
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${TIER_PROVIDER}/a1`,
+    allCombos: [root, tierA, tierB],
+    config: ctx.config,
+    effectiveSessionId: sessionId,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, modelStr) => {
+      dispatched.push(modelStr);
+      if (modelStr === `${TIER_PROVIDER}/a1`) return new Response("busy", { status: 503 });
+      return okResponse(`answer from ${modelStr}`);
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response, "a tier sibling must serve the turn");
+  assert.equal(res.suppressPinRecording, false);
+  assert.deepEqual(
+    dispatched,
+    [`${TIER_PROVIDER}/a1`, `${TIER_PROVIDER}/a2`],
+    "must try the pin, then its tier sibling — never tierB while the tier still has a candidate"
+  );
+  assert.equal(
+    getLastSessionModel(sessionId, root.name),
+    `${TIER_PROVIDER}/a2`,
+    "the session must re-pin to the sibling that actually answered"
+  );
+});
+
+test("tryPinnedModelDispatch: whole tier fails → falls through without moving the pin, so the next turn retries the original pin (rule 2)", async () => {
+  await seedTierProvider();
+  const tierA: ComboInput = {
+    name: "tierA-exhausted",
+    strategy: "priority",
+    models: [{ model: `${TIER_PROVIDER}/a1` }, { model: `${TIER_PROVIDER}/a2` }],
+    config: {},
+  };
+  const tierB: ComboInput = {
+    name: "tierB-exhausted",
+    strategy: "priority",
+    models: [{ model: `${TIER_PROVIDER}/b1` }],
+    config: {},
+  };
+  const root = tieredCombo("root-exhausted", tierA.name, tierB.name);
+  const ctx = setup(root);
+  const sessionId = "sess-tier-exhausted";
+  recordSessionModelUsage(sessionId, root.name, `${TIER_PROVIDER}/a1`, TIER_PROVIDER);
+
+  const dispatched: string[] = [];
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${TIER_PROVIDER}/a1`,
+    allCombos: [root, tierA, tierB],
+    config: ctx.config,
+    effectiveSessionId: sessionId,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, modelStr) => {
+      dispatched.push(modelStr);
+      // Both tierA members fail. tierB would answer through the combo's
+      // normal strategy — but that machinery lives in the caller (combo.ts),
+      // not here, so it must never be dispatched by this function.
+      return new Response("busy", { status: 503 });
+    },
+    log: ctx.log,
+  });
+
+  assert.equal(
+    res.response,
+    null,
+    "the whole tier is unavailable — this function never serves an out-of-tier target itself"
+  );
+  assert.equal(
+    res.suppressPinRecording,
+    true,
+    "rule 2 — the caller's eventual fallback must not take over the pin"
+  );
+  assert.deepEqual(
+    dispatched,
+    [`${TIER_PROVIDER}/a1`, `${TIER_PROVIDER}/a2`],
+    "only the pin and its tier are tried here"
+  );
+  assert.equal(
+    getLastSessionModel(sessionId, root.name),
+    `${TIER_PROVIDER}/a1`,
+    "the pin is unchanged — the next turn retries the original pin and its tier"
   );
 });
 

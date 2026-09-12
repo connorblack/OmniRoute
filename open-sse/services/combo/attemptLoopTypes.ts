@@ -105,6 +105,15 @@ export type AttemptLoopDeps = {
   universalHandoffConfig?: UniversalHandoffConfig;
   relayOptions?: { sessionId?: string | null } | null;
   relayConfig?: ContextRelayConfig | null;
+  /**
+   * Set when tryPinnedModelDispatch fell through after exhausting the pinned
+   * target's whole tier (dispatchPrelude.ts) — this turn's successful attempt
+   * must not overwrite the session's context-cache pin (one-transient-
+   * failure-should-not-permanently-move-the-pin). Only gates the
+   * context_cache_protection recordSessionModelUsage call in
+   * executeTargetAttempt.ts; universal handoff pinning is unaffected.
+   */
+  suppressSessionPinRecording?: boolean;
 };
 
 export type GateDecision =

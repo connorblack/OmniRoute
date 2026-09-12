@@ -718,6 +718,11 @@ async function handleComboChatInner({
   // falls through to the target iteration loop below. Implementations live in
   // combo/dispatchPrelude.ts; only the chaos + round-robin hand-offs are short
   // enough to stay inline.
+  // #<pinned-tiers>: falls through with `suppressPinRecording: true` when the
+  // pinned target's whole tier was unavailable — this turn's answer must not
+  // move the session pin (see tryPinnedModelDispatch's doc comment). Threaded
+  // into AttemptLoopDeps below so executeTargetAttempt skips recording it.
+  let suppressSessionPinRecording = false;
   if (pinnedModel) {
     const pinnedDispatch = await tryPinnedModelDispatch({
       body,
@@ -725,12 +730,14 @@ async function handleComboChatInner({
       pinnedModel,
       allCombos,
       config,
+      effectiveSessionId,
       clientRequestedStream,
       handleSingleModelWithTimeout,
       log,
       hiddenModelsByProvider,
     });
-    if (pinnedDispatch) return pinnedDispatch;
+    if (pinnedDispatch.response) return pinnedDispatch.response;
+    suppressSessionPinRecording = pinnedDispatch.suppressPinRecording;
   }
 
   const cfg = config as Record<string, unknown>;
@@ -1032,6 +1039,7 @@ async function handleComboChatInner({
     universalHandoffConfig,
     relayOptions,
     relayConfig,
+    suppressSessionPinRecording,
   };
 
   const extra = {
