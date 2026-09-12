@@ -72,3 +72,31 @@ test("Kiro Claude Code-style model aliases resolve without polluting the visible
     extendedContext: false,
   });
 });
+
+test("ollama-cloud native colon-form ids are not rewritten by the cross-proxy dialect table (#regression)", async () => {
+  // Ollama Cloud's own catalog uses the colon form ("gpt-oss:120b"), which is also
+  // a CROSS_PROXY_MODEL_ALIASES source key added for NVIDIA NIM's dialect. Applying
+  // that global rewrite regardless of destination provider turned a valid Ollama
+  // Cloud request into "gpt-oss-120b", an id Ollama Cloud's live catalog never had,
+  // and every chat completion 404'd as "not available in the active live catalog".
+  assert.deepEqual(await getModelInfoCore("ollamacloud/gpt-oss:120b", {}), {
+    provider: "ollama-cloud",
+    model: "gpt-oss:120b",
+    extendedContext: false,
+  });
+
+  assert.deepEqual(await getModelInfoCore("ollama-cloud/gpt-oss:120b", {}), {
+    provider: "ollama-cloud",
+    model: "gpt-oss:120b",
+    extendedContext: false,
+  });
+
+  // gpt-oss:20b was never in CROSS_PROXY_MODEL_ALIASES, but it exercises the same
+  // native-id guard and must keep passing through untouched.
+  assert.deepEqual(await getModelInfoCore("ollamacloud/gpt-oss:20b", {}), {
+    provider: "ollama-cloud",
+    model: "gpt-oss:20b",
+    extendedContext: false,
+  });
+});
+
