@@ -493,6 +493,35 @@ test("tryPinnedModelDispatch: serves the pinned response when the pin is healthy
   );
 });
 
+test("tryPinnedModelDispatch: preserves the resolved account on an account-pinned target", async () => {
+  await seedHealthyPinProvider();
+  const connectionId = "account-pinned-connection";
+  const ctx = setup({
+    name: "account-pinned-combo",
+    strategy: "priority",
+    models: [{ model: `${HEALTHY_PROVIDER}/live`, connectionId }],
+    config: {},
+  });
+  let selectedConnection: string | null = null;
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${HEALTHY_PROVIDER}/live`,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      selectedConnection = target && "connectionId" in target ? target.connectionId : null;
+      return okResponse("pinned answer");
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(selectedConnection, connectionId);
+});
+
 test("tryPinnedModelDispatch: expands the combo system_message template on the pinned path (#5501)", async () => {
   const ctx = setup({
     name: "pinned-combo",
