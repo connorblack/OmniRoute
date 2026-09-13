@@ -671,6 +671,86 @@ test("tryPinnedModelDispatch: applies an executable child combo's account hedge 
   assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
 });
 
+test("tryPinnedModelDispatch: bounds account hedges and honors the API key allowlist", async () => {
+  const provider = "scopedpinnedhedge";
+  const connections = [];
+  for (let index = 0; index < 4; index += 1) {
+    connections.push(
+      await createProviderConnection({
+        provider,
+        authType: "api-key",
+        name: `scoped-pinned-hedge-${index}`,
+        isActive: true,
+        apiKey: `test-scoped-pinned-hedge-${index}`,
+      })
+    );
+  }
+  invalidateDbCache();
+
+  const allowedConnections = connections.slice(0, 3).map((connection) => connection.id);
+  const model = `${provider}/deepseek`;
+  const ctx = setup({
+    name: "scoped-pinned-hedge-combo",
+    strategy: "random",
+    models: [{ model }],
+    config: {
+      connectionAwareExpansion: true,
+      zeroLatencyOptimizationsEnabled: true,
+      hedging: true,
+      hedgeDelayMs: 5,
+      maxParallelTargets: 2,
+    },
+  });
+  const calls: string[] = [];
+  let active = 0;
+  let maxActive = 0;
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: model,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    strategy: "random",
+    apiKeyAllowedConnections: allowedConnections,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      const connectionId = target && "connectionId" in target ? target.connectionId : null;
+      assert.ok(connectionId);
+      calls.push(connectionId);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 100);
+            target.modelAbortSignal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          return okResponse("slow");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return calls.length === 2 ? new Response("busy", { status: 503 }) : okResponse("fast");
+      } finally {
+        active -= 1;
+      }
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(await res.response.clone().json().then((body) => body.choices[0].message.content), "fast");
+  assert.deepEqual(new Set(calls), new Set(allowedConnections));
+  assert.equal(calls.includes(connections[3].id), false);
+  assert.equal(maxActive, 2);
+});
+
 test("tryPinnedModelDispatch: expands the combo system_message template on the pinned path (#5501)", async () => {
   const ctx = setup({
     name: "pinned-combo",
