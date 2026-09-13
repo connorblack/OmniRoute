@@ -671,7 +671,7 @@ test("tryPinnedModelDispatch: applies an executable child combo's account hedge 
   assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
 });
 
-test("tryPinnedModelDispatch: bounds account hedges and honors the API key allowlist", async () => {
+test("tryPinnedModelDispatch: defaults hedge concurrency to two and honors the API key allowlist", async () => {
   const provider = "scopedpinnedhedge";
   const connections = [];
   for (let index = 0; index < 4; index += 1) {
@@ -698,7 +698,6 @@ test("tryPinnedModelDispatch: bounds account hedges and honors the API key allow
       zeroLatencyOptimizationsEnabled: true,
       hedging: true,
       hedgeDelayMs: 5,
-      maxParallelTargets: 2,
     },
   });
   const calls: string[] = [];
@@ -718,10 +717,11 @@ test("tryPinnedModelDispatch: bounds account hedges and honors the API key allow
       const connectionId = target && "connectionId" in target ? target.connectionId : null;
       assert.ok(connectionId);
       calls.push(connectionId);
+      const ordinal = calls.length;
       active += 1;
       maxActive = Math.max(maxActive, active);
       try {
-        if (calls.length === 1) {
+        if (ordinal === 1) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(resolve, 100);
             target.modelAbortSignal?.addEventListener(
@@ -735,8 +735,8 @@ test("tryPinnedModelDispatch: bounds account hedges and honors the API key allow
           });
           return okResponse("slow");
         }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        return calls.length === 2 ? new Response("busy", { status: 503 }) : okResponse("fast");
+        await new Promise((resolve) => setTimeout(resolve, ordinal === 2 ? 20 : 5));
+        return ordinal === 2 ? new Response("busy", { status: 503 }) : okResponse("fast");
       } finally {
         active -= 1;
       }
