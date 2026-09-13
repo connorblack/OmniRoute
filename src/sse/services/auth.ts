@@ -2940,7 +2940,7 @@ export async function markAccountUnavailable(
             ? "quota_exhausted"
             : status === 429
               ? "rate_limited"
-              : classifiedLockoutReason === RateLimitReason.MODEL_CAPACITY
+              : status === 503 && classifiedLockoutReason === RateLimitReason.MODEL_CAPACITY
                 ? RateLimitReason.MODEL_CAPACITY
                 : RateLimitReason.SERVER_ERROR;
 
