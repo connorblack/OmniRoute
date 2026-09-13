@@ -733,6 +733,7 @@ async function handleComboChatInner({
       strategy,
       effectiveSessionId,
       settings,
+      apiKeyAllowedConnections,
       clientRequestedStream,
       handleSingleModelWithTimeout,
       log,
