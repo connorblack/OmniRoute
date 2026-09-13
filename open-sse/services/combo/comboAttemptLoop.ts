@@ -45,6 +45,12 @@ import { evaluateExecuteTargetGates } from "./executeTargetGates.ts";
 import { executeTargetAttempt } from "./executeTargetAttempt.ts";
 import type { AttemptLoopDeps, AttemptLoopState, ExecuteTargetResult } from "./attemptLoopTypes.ts";
 
+function resolveMaxParallelTargets(value: unknown, targetCount: number): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return targetCount;
+  return Math.min(parsed, targetCount);
+}
+
 export type DispatchWithCooldownRetryExtra = {
   maxSetRetries: number;
   setRetryDelayMs: number;
@@ -193,6 +199,28 @@ export async function dispatchWithCooldownRetry(opts: {
       const hasProtectedPriorityTarget =
         deps.strategy === "priority" &&
         state.orderedTargets.some((target) => target.fallbackOnlyOnQuotaExhaustion === true);
+      const maxParallelTargets = resolveMaxParallelTargets(
+        deps.config.maxParallelTargets,
+        state.orderedTargets.length
+      );
+      const waitForAnyRunningTask = (): Promise<void> =>
+        runningTasks.size > 0 ? Promise.race([...runningTasks]) : Promise.resolve();
+      const waitForHedgeWindow = async (delayMs: number): Promise<void> => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const delayPromise = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, delayMs);
+        });
+        try {
+          await Promise.race([
+            waitForAnyRunningTask(),
+            globalPromise,
+            delayPromise,
+            loopSafetyPromise,
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
 
       const executeTarget = async (i: number): Promise<ExecuteTargetResult> => {
         const gate = await extra.evaluateGates({ index: i, state, deps });
@@ -257,11 +285,12 @@ export async function dispatchWithCooldownRetry(opts: {
           !hasProtectedPriorityTarget &&
           i + 1 < state.orderedTargets.length
         ) {
-          const hedgeDelay = resolveDelayMs(deps.config.hedgeDelayMs, 500);
-          const timeoutPromise = new Promise<void>((r) => {
-            setTimeout(r, hedgeDelay);
-          });
-          await Promise.race([task, globalPromise, timeoutPromise, loopSafetyPromise]);
+          if (runningTasks.size >= maxParallelTargets) {
+            await Promise.race([waitForAnyRunningTask(), globalPromise, loopSafetyPromise]);
+          } else {
+            const hedgeDelay = resolveDelayMs(deps.config.hedgeDelayMs, 500);
+            await waitForHedgeWindow(hedgeDelay);
+          }
         } else {
           await Promise.race([task, globalPromise, loopSafetyPromise]);
         }
