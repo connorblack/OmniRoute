@@ -359,6 +359,58 @@ async function buildSemaphoreGate(
  * Resolves at most one level of nesting (the combo-ref tier `member` lives
  * directly under, matching resolvePinnedTier's own tier boundary).
  */
+type PinnedMemberPolicy = {
+  combo: ComboLike;
+  strategy: string;
+  config: ComboSetupConfig;
+  target: ResolvedComboTarget;
+};
+
+function resolvePinnedMemberPolicy(args: {
+  combo: ComboLike;
+  strategy: string;
+  member: ResolvedComboTarget;
+  allCombos?: ComboCollectionLike;
+  config: ComboSetupConfig;
+  settings?: Record<string, unknown> | null;
+  hiddenModelsByProvider?: HiddenModelsByProvider;
+}): PinnedMemberPolicy {
+  const { combo, strategy, member, allCombos, config, settings, hiddenModelsByProvider } = args;
+  const rootPolicy = { combo, strategy, config, target: member };
+  const separatorIndex = member.executionKey.indexOf(">");
+  if (separatorIndex === -1 || !allCombos) return rootPolicy;
+  if (normalizeNestedComboMode(config.nestedComboMode) !== "execute") return rootPolicy;
+
+  const tierStepId = member.executionKey.slice(0, separatorIndex);
+  const units = resolveComboRuntimeUnits(
+    combo,
+    allCombos,
+    "execute",
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const tierUnit = units.find((unit) => unit.executionKey === tierStepId);
+  if (!tierUnit || tierUnit.kind !== "combo-ref") return rootPolicy;
+
+  const nestedCombo = findComboByName(allCombos, tierUnit.comboName);
+  if (!nestedCombo) return rootPolicy;
+  const nestedTargets = resolveComboTargets(
+    nestedCombo,
+    allCombos,
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const localTarget = nestedTargets.find((target) => target.modelStr === member.modelStr);
+  if (!localTarget) return rootPolicy;
+
+  return {
+    combo: nestedCombo,
+    strategy: normalizeRoutingStrategy(nestedCombo.strategy || "priority"),
+    config: resolveComboSetupConfig(nestedCombo, settings ?? null),
+    target: localTarget,
+  };
+}
+
 async function resolvePinnedRoundRobinGate(args: {
   combo: ComboLike;
   strategy: string;
@@ -368,52 +420,14 @@ async function resolvePinnedRoundRobinGate(args: {
   settings?: Record<string, unknown> | null;
   hiddenModelsByProvider?: HiddenModelsByProvider;
 }): Promise<PinnedSemaphoreGate | null> {
-  const { combo, strategy, member, allCombos, config, settings, hiddenModelsByProvider } = args;
-  const rootConfig = config as unknown as Record<string, unknown>;
-
-  if (strategy === "round-robin") {
-    return buildSemaphoreGate(combo, rootConfig, member.executionKey, member.connectionId);
-  }
-
-  // Not round-robin at the root — `member` may still live inside a nested
-  // round-robin TIER (a combo-ref run under nestedComboMode "execute"; see
-  // resolvePinnedTier).
-  const sep = member.executionKey.indexOf(">");
-  if (sep === -1 || !allCombos) return null;
-  if (normalizeNestedComboMode(config.nestedComboMode) !== "execute") return null;
-
-  const tierStepId = member.executionKey.slice(0, sep);
-  const units = resolveComboRuntimeUnits(
-    combo,
-    allCombos,
-    "execute",
-    clampComboDepth(config.maxComboDepth),
-    hiddenModelsByProvider
+  const policy = resolvePinnedMemberPolicy(args);
+  if (policy.strategy !== "round-robin") return null;
+  return buildSemaphoreGate(
+    policy.combo,
+    policy.config as unknown as Record<string, unknown>,
+    policy.target.executionKey,
+    policy.target.connectionId
   );
-  const tierUnit = units.find((u) => u.executionKey === tierStepId);
-  if (!tierUnit || tierUnit.kind !== "combo-ref") return null;
-
-  const nestedCombo = findComboByName(allCombos, tierUnit.comboName);
-  if (!nestedCombo) return null;
-  if (normalizeRoutingStrategy(nestedCombo.strategy || "priority") !== "round-robin") return null;
-
-  // Fresh (path-less) resolution — a nested combo dispatched via `execute`
-  // mode runs itself from scratch (its own handleComboChat/handleRoundRobinCombo
-  // call), so its OWN executionKeys are NOT prefixed by the parent's tier step.
-  const nestedTargets = resolveComboTargets(
-    nestedCombo,
-    allCombos,
-    clampComboDepth(config.maxComboDepth),
-    hiddenModelsByProvider
-  );
-  const localTarget = nestedTargets.find((t) => t.modelStr === member.modelStr);
-  if (!localTarget) return null;
-
-  const nestedConfig = resolveComboSetupConfig(nestedCombo, settings ?? null) as unknown as Record<
-    string,
-    unknown
-  >;
-  return buildSemaphoreGate(nestedCombo, nestedConfig, localTarget.executionKey, localTarget.connectionId);
 }
 
 type PinnedMemberPlan = {
@@ -440,10 +454,22 @@ async function buildPinnedMemberPlan(args: {
   strategy: string;
   config: ComboSetupConfig;
   settings?: Record<string, unknown> | null;
+  allCombos?: ComboCollectionLike;
+  hiddenModelsByProvider?: HiddenModelsByProvider;
   log: ComboLogger;
   apiKeyAllowedConnections?: string[] | null;
 }): Promise<PinnedMemberPlan> {
-  const { member, combo, strategy, config, settings, log, apiKeyAllowedConnections } = args;
+  const {
+    member,
+    combo,
+    strategy,
+    config,
+    settings,
+    allCombos,
+    hiddenModelsByProvider,
+    log,
+    apiKeyAllowedConnections,
+  } = args;
   if (!member) {
     return {
       candidates: [null],
@@ -453,26 +479,35 @@ async function buildPinnedMemberPlan(args: {
     };
   }
 
-  const candidates = await expandTargetsForAllStrategies({
+  const policy = resolvePinnedMemberPolicy({
+    combo,
     strategy,
-    targets: [member],
-    comboName: combo.name,
-    config: config as Record<string, unknown>,
+    member,
+    allCombos,
+    config,
+    settings,
+    hiddenModelsByProvider,
+  });
+  const candidates = await expandTargetsForAllStrategies({
+    strategy: policy.strategy,
+    targets: [policy.target],
+    comboName: policy.combo.name,
+    config: policy.config as Record<string, unknown>,
     settings,
     log,
     apiKeyAllowedConnectionIds: apiKeyAllowedConnections ?? null,
   });
   const hedging =
-    config.zeroLatencyOptimizationsEnabled === true &&
-    config.hedging === true &&
+    policy.config.zeroLatencyOptimizationsEnabled === true &&
+    policy.config.hedging === true &&
     candidates.length > 1;
 
   return {
     candidates,
     hedging,
-    hedgeDelayMs: resolveDelayMs(config.hedgeDelayMs, 500),
+    hedgeDelayMs: resolveDelayMs(policy.config.hedgeDelayMs, 500),
     maxParallelTargets: hedging
-      ? resolvePinnedMaxParallelTargets(config.maxParallelTargets, candidates.length)
+      ? resolvePinnedMaxParallelTargets(policy.config.maxParallelTargets, candidates.length)
       : 1,
   };
 }
@@ -783,6 +818,8 @@ export async function tryPinnedModelDispatch(args: {
         strategy,
         config,
         settings,
+        allCombos,
+        hiddenModelsByProvider,
         log,
         apiKeyAllowedConnections,
       });
