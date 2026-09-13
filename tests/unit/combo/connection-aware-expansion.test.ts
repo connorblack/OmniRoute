@@ -250,12 +250,16 @@ test("T2b: global setting enables expansion when combo config is unset", async (
   assert.equal(receivedConnectionId, healthy.id);
 });
 
-// T3: provider without a quota fetcher is not expanded
-
-test("T3: no-fetcher provider passes through untouched", async () => {
+test("T3: no-fetcher provider expands when connection-aware routing is enabled", async () => {
   const provider = "cae-t3-nofetcher-" + randomUUID();
-  // NOTE: no registerQuotaFetcher call for this provider.
-  await providersDb.createProviderConnection({
+  const secondConnection = await providersDb.createProviderConnection({
+    provider,
+    authType: "apikey",
+    name: "second",
+    apiKey: "test-key-" + randomUUID(),
+    isActive: true,
+  });
+  const connection = await providersDb.createProviderConnection({
     provider,
     authType: "apikey",
     name: "only",
@@ -272,9 +276,16 @@ test("T3: no-fetcher provider passes through untouched", async () => {
     log: noopLog,
   });
 
-  assert.equal(out.length, 1);
-  assert.equal(out[0].connectionId, null);
-  assert.equal(out[0].executionKey, "step-1");
+  assert.equal(out.length, 2);
+  assert.deepEqual(
+    new Set(out.map((expanded) => expanded.connectionId)),
+    new Set([connection.id, secondConnection.id])
+  );
+  for (const expanded of out) {
+    assert.ok(expanded.connectionId);
+    assert.deepEqual(expanded.allowedConnectionIds, [expanded.connectionId]);
+    assert.ok(expanded.executionKey.includes("@" + expanded.connectionId));
+  }
 });
 
 // T4: pinned connection that is exhausted drops the target
