@@ -71,6 +71,8 @@ const HEADROOM_SATURATION_FETCH_CONCURRENCY = 5;
 
 const MAX_RESET_AWARE_CACHE = 200;
 
+type ConnectionDiscoveryScope = "quota-capable" | "all-active";
+
 const resetAwareQuotaCache = new Map<
   string,
   { fetchedAt: number; quota: unknown; refreshPromise: Promise<unknown> | null }
@@ -81,10 +83,16 @@ async function getQuotaAwareConnectionsForTarget(
   connectionCache: Map<string, Array<Record<string, unknown>>>,
   connectionLoadPromises: Map<string, Promise<Array<Record<string, unknown>>>>,
   comboName: string,
-  log: { warn?: (...args: unknown[]) => void }
+  log: { warn?: (...args: unknown[]) => void },
+  connectionDiscovery: ConnectionDiscoveryScope
 ) {
   const provider = getResetAwareProvider(target);
-  if (!provider || !getQuotaFetcher(provider)) return [];
+  if (
+    !provider ||
+    (connectionDiscovery === "quota-capable" && !getQuotaFetcher(provider))
+  ) {
+    return [];
+  }
   if (!connectionCache.has(provider)) {
     if (!connectionLoadPromises.has(provider)) {
       connectionLoadPromises.set(
@@ -165,18 +173,15 @@ function getTargetConnectionIds(
   return connectionIds;
 }
 
-/**
- * Exported for the connection-aware expansion pipeline stage
- * (connectionAwareExpansion.ts) so quota-aware combo strategies can share the
- * A-group per-connection expander without duplicating its logic. The
- * function body is unchanged; only the visibility is widened.
- */
 export async function expandTargetsByQuotaAwareConnections(
   targets: ResolvedComboTarget[],
   comboName: string,
   log: { warn?: (...args: unknown[]) => void },
   apiKeyAllowedConnectionIds?: string[] | null,
-  opts?: { skipExhaustionFilter?: boolean }
+  opts?: {
+    skipExhaustionFilter?: boolean;
+    connectionDiscovery?: ConnectionDiscoveryScope;
+  }
 ): Promise<{
   connectionById: Map<string, Record<string, unknown>>;
   expandedTargets: ResolvedComboTarget[];
@@ -193,7 +198,8 @@ export async function expandTargetsByQuotaAwareConnections(
         connectionCache,
         connectionLoadPromises,
         comboName,
-        log
+        log,
+        opts?.connectionDiscovery ?? "quota-capable"
       ),
       target,
     }))
@@ -211,7 +217,12 @@ export async function expandTargetsByQuotaAwareConnections(
     );
     if (connectionIds.length === 0) {
       const provider = getResetAwareProvider(target);
-      if (provider && getQuotaFetcher(provider)) continue;
+      if (
+        provider &&
+        (opts?.connectionDiscovery === "all-active" || getQuotaFetcher(provider))
+      ) {
+        continue;
+      }
       if (
         unrestrictedConnectionIds.length > 0 &&
         normalizeConnectionIds(apiKeyAllowedConnectionIds)
@@ -225,7 +236,7 @@ export async function expandTargetsByQuotaAwareConnections(
     for (const connectionId of connectionIds) {
       const provider = getResetAwareProvider(target);
       const connection = connectionById.get(connectionId);
-      if (provider && getQuotaFetcher(provider) && connection?.provider !== provider) continue;
+      if (provider && connection?.provider !== provider) continue;
       if (
         connection &&
         typeof connection.rateLimitedUntil === "string" &&
@@ -248,6 +259,7 @@ export async function expandTargetsByQuotaAwareConnections(
       expandedTargets.push({
         ...target,
         connectionId,
+        allowedConnectionIds: [connectionId],
         executionKey:
           target.connectionId === connectionId
             ? target.executionKey

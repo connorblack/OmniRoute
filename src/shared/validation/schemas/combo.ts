@@ -212,6 +212,7 @@ export const comboRuntimeConfigSchema = z
     zeroLatencyOptimizationsEnabled: z.boolean().optional(),
     hedging: z.boolean().optional(),
     hedgeDelayMs: z.coerce.number().int().min(0).max(60000).optional(),
+    maxParallelTargets: z.coerce.number().int().min(1).max(20).optional(),
     fallbackCompressionMode: compressionModeSchema.optional(),
     fallbackCompressionThreshold: z.coerce.number().int().min(0).max(2_000_000).optional(),
     predictiveTtftMs: z.coerce.number().int().min(0).max(300000).optional(),

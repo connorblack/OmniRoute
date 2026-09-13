@@ -11,6 +11,9 @@ process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = "test-combo-quota-reset-6863";
 
 const core = await import("../../src/lib/db/core.ts");
+const providersDb = await import("../../src/lib/db/providers.ts");
+const settingsDb = await import("../../src/lib/db/settings.ts");
+const auth = await import("../../src/sse/services/auth.ts");
 const { handleComboChat } = await import("../../open-sse/services/combo.ts");
 const { getModelLockoutInfo, clearAllModelLockouts, parseRetryFromErrorText } =
   await import("../../open-sse/services/accountFallback.ts");
@@ -20,6 +23,18 @@ const UPSTREAM_429_MESSAGE =
 
 function createLog() {
   return { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+}
+
+async function createConnection(provider: string, name: string) {
+  return providersDb.createProviderConnection({
+    provider,
+    authType: "apikey",
+    name,
+    apiKey: `test-key-${name}`,
+    isActive: true,
+    testStatus: "active",
+    providerSpecificData: { passthroughModels: true },
+  });
 }
 
 test.beforeEach(() => {
@@ -49,6 +64,9 @@ test("combo 429 body reset beats base cooldown but is capped by maxCooldownMs (#
     },
   };
 
+  await settingsDb.updateSettings(settings);
+  const connection = await createConnection(provider, "quota-reset-antigravity");
+
   await handleComboChat({
     body: {},
     combo: {
@@ -57,11 +75,24 @@ test("combo 429 body reset beats base cooldown but is capped by maxCooldownMs (#
       models: [`${provider}/${model}`],
       config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
     },
-    handleSingleModel: async () =>
-      new Response(JSON.stringify({ error: { message: UPSTREAM_429_MESSAGE } }), {
+    handleSingleModel: async () => {
+      await auth.markAccountUnavailable(
+        connection.id,
+        429,
+        UPSTREAM_429_MESSAGE,
+        provider,
+        model,
+        null,
+        auth.buildExhaustionOptions("quota-reset-6863", { isCombo: true })
+      );
+      return new Response(JSON.stringify({ error: { message: UPSTREAM_429_MESSAGE } }), {
         status: 429,
-        headers: { "content-type": "application/json" },
-      }),
+        headers: {
+          "content-type": "application/json",
+          "x-omniroute-selected-connection-id": connection.id,
+        },
+      });
+    },
     isModelAvailable: async () => true,
     log: createLog(),
     settings,
@@ -74,7 +105,7 @@ test("combo 429 body reset beats base cooldown but is capped by maxCooldownMs (#
     `sanity: reset text must parse to ~92.5h, got ${parsedResetMs}`
   );
 
-  const info = getModelLockoutInfo(provider, "", model);
+  const info = getModelLockoutInfo(provider, connection.id, model);
   assert.ok(info, "combo 429 must record a model lockout");
   // Preserve #6863 (do not fall back to ~seconds), but prose is not an
   // authoritative reset and must not bypass the operator's 30m maximum.
@@ -91,7 +122,7 @@ test("combo 429 lockout prefers a SHORT parsed reset over the subscription fallb
   // while quotaResetHintMs carries the real parsed reset. A max() of the two
   // would over-lock (1h) — the lockout must follow the parsed value (~45m),
   // matching the single-model path in src/sse/services/auth.ts.
-  const provider = "claude"; // OAuth category → subscription-quota branch applies
+  const provider = "antigravity";
   const model = "claude-sonnet-4-6";
   const shortResetMessage =
     "429: Usage limit reached. Your Claude Pro usage limit resets in 45m0s.";
@@ -107,6 +138,9 @@ test("combo 429 lockout prefers a SHORT parsed reset over the subscription fallb
     },
   };
 
+  await settingsDb.updateSettings(settings);
+  const connection = await createConnection(provider, "short-reset-antigravity");
+
   await handleComboChat({
     body: {},
     combo: {
@@ -115,11 +149,24 @@ test("combo 429 lockout prefers a SHORT parsed reset over the subscription fallb
       models: [`${provider}/${model}`],
       config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
     },
-    handleSingleModel: async () =>
-      new Response(JSON.stringify({ error: { message: shortResetMessage } }), {
+    handleSingleModel: async () => {
+      await auth.markAccountUnavailable(
+        connection.id,
+        429,
+        shortResetMessage,
+        provider,
+        model,
+        null,
+        auth.buildExhaustionOptions("short-reset-6863", { isCombo: true })
+      );
+      return new Response(JSON.stringify({ error: { message: shortResetMessage } }), {
         status: 429,
-        headers: { "content-type": "application/json" },
-      }),
+        headers: {
+          "content-type": "application/json",
+          "x-omniroute-selected-connection-id": connection.id,
+        },
+      });
+    },
     isModelAvailable: async () => true,
     log: createLog(),
     settings,
@@ -129,7 +176,7 @@ test("combo 429 lockout prefers a SHORT parsed reset over the subscription fallb
   const parsedResetMs = parseRetryFromErrorText(shortResetMessage);
   assert.equal(parsedResetMs, 45 * 60 * 1000, "sanity: reset text must parse to 45m");
 
-  const info = getModelLockoutInfo(provider, "", model);
+  const info = getModelLockoutInfo(provider, connection.id, model);
   assert.ok(info, "combo 429 must record a model lockout");
   // Must be the parsed 45m — NOT the 1h subscription fallback (over-lock).
   assert.ok(

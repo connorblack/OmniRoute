@@ -70,8 +70,11 @@ import {
   getModelLockoutInfo,
   lockModel,
   hasPerModelQuota,
+  classifyLockoutReason,
+  getNetworkModelLockScope,
   getRuntimeProviderProfile,
   recordModelLockoutFailure,
+  recordModelLockoutFailureForScope,
   retryHintBypassesMaxCooldownMs,
   isProviderModelUnsupported400,
 } from "@omniroute/open-sse/services/accountFallback.ts";
@@ -2558,7 +2561,7 @@ export function buildExhaustionOptions(
   correlationId: string | null,
   rest: {
     persistUnavailableState?: boolean;
-    /** Caller is the combo engine — it records its own model-level lockouts. */
+    /** Legacy caller marker; AUTH owns network-response lockout accounting. */
     isCombo?: boolean;
     headers?: Headers | Record<string, string> | null;
   } = {}
@@ -2581,7 +2584,6 @@ export async function markAccountUnavailable(
   providerProfile = null,
   options: {
     persistUnavailableState?: boolean;
-    /** Caller is the combo engine — it records its own model-level lockouts. */
     isCombo?: boolean;
     headers?: Headers | Record<string, string> | null;
     correlationId?: string | null;
@@ -2930,6 +2932,7 @@ export async function markAccountUnavailable(
       model &&
       (status === 404 || isNvidiaModelGone || status === 429 || status >= 500)
     ) {
+      const classifiedLockoutReason = classifyLockoutReason(status, errorText);
       const reason =
         status === 404 || isNvidiaModelGone
           ? "not_found"
@@ -2937,7 +2940,9 @@ export async function markAccountUnavailable(
             ? "quota_exhausted"
             : status === 429
               ? "rate_limited"
-              : "server_error";
+              : status === 503 && classifiedLockoutReason === RateLimitReason.MODEL_CAPACITY
+                ? RateLimitReason.MODEL_CAPACITY
+                : RateLimitReason.SERVER_ERROR;
 
       // #5976: a bare 500 is intermittent and NOT model-specific — skip
       // lockout/cooldown ONLY for the exact 500 (the contract its own tests pin:
@@ -2962,6 +2967,39 @@ export async function markAccountUnavailable(
       }
 
       const usesExactAntigravityLock = provider === "antigravity";
+      const networkLockScope = getNetworkModelLockScope(provider, connectionId, model, {
+        status,
+        reason,
+      });
+      if (networkLockScope.kind === "provider-model") {
+        const lockout = recordModelLockoutFailureForScope({
+          scope: networkLockScope,
+          reason,
+          status,
+          fallbackCooldownMs:
+            fallbackResult.baseCooldownMs ?? effectiveProviderProfile?.baseCooldownMs ?? 0,
+          profile: effectiveProviderProfile,
+          exactCooldownMs:
+            fallbackResult.usedUpstreamRetryHint === true
+              ? fallbackResult.cooldownMs
+              : (fallbackResult.quotaResetHintMs ?? null),
+          maxCooldownMs: mlSettings.maxCooldownMs,
+          exactCooldownIsUpstreamReset: retryHintBypassesMaxCooldownMs(
+            fallbackResult.retryHintSource
+          ),
+        });
+        updateProviderConnection(connectionId, {
+          lastErrorType: reason,
+          lastError: `Model ${model} ${reason}`,
+          lastErrorAt: new Date().toISOString(),
+          errorCode: status,
+        }).catch(() => {});
+        log.info(
+          "AUTH",
+          `Model-only lockout for ${provider}:${model} (${networkLockScope.kind}) — ${status} ${reason} ${Math.ceil(lockout.cooldownMs / 1000)}s (failureCount=${lockout.failureCount}, connection stays active)`
+        );
+        return { shouldFallback: true, cooldownMs: lockout.cooldownMs };
+      }
       const quotaScope = usesExactAntigravityLock
         ? "model"
         : getQuotaScopeLabelForProvider(provider, model);

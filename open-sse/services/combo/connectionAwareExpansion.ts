@@ -124,7 +124,9 @@ export async function expandTargetsForAllStrategies(
     const expander =
       args.__testExpander ??
       ((t: ResolvedComboTarget[], name: string, l: ComboLogger, allowed: string[] | null) =>
-        expandTargetsByQuotaAwareConnections(t, name, l, allowed));
+        expandTargetsByQuotaAwareConnections(t, name, l, allowed, {
+          connectionDiscovery: "all-active",
+        }));
     const { expandedTargets } = await expander(
       targets,
       comboName,

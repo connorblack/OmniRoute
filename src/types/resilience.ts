@@ -1,10 +1,12 @@
 import type { TransitionRecord } from "@/shared/utils/circuitBreaker";
+import type { ModelLockoutInfo } from "@omniroute/open-sse/services/accountFallback";
 
 // Shared contract between the connections API (src/app/api/resilience/connections/route.ts)
 // and any future UI consumer. Keep in sync with the route's GET response shape.
 
 export interface ResilienceConnectionsResponse {
   connections: ConnectionState[];
+  providerModelLockouts: ModelLockoutInfo[];
   breakers: BreakerWithHistory[];
   // sinceMs/untilMs are ABSOLUTE timestamps (epoch ms); now is server time.
   window: { sinceMs: number; untilMs: number; now: number };

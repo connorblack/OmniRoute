@@ -603,9 +603,24 @@ export async function getRuntimeProviderProfile(provider: string | null | undefi
 }
 
 // ─── Per-Model Lockout Tracking ─────────────────────────────────────────────
-// In-memory map: "provider:connectionId:model" → { reason, until, lockedAt }
 const modelLockouts = new Map<string, ModelLockoutEntry>();
 const modelFailureState = new Map<string, ModelFailureState>();
+const PROVIDER_MODEL_LOCK_KEY_PREFIX = "provider-model:";
+
+export type ModelLockScope =
+  | { kind: "connection-model"; provider: string; connectionId: string; model: string }
+  | { kind: "provider-model"; provider: string; model: string };
+
+export type ModelLockoutFailureOptions = {
+  scope: ModelLockScope;
+  reason: string;
+  status: number;
+  fallbackCooldownMs: number;
+  profile?: ProviderProfile | null;
+  exactCooldownMs?: number | null;
+  maxCooldownMs?: number;
+  exactCooldownIsUpstreamReset?: boolean;
+};
 
 // Aliases (e.g. "cx" → "codex") must share lockout state with their canonical
 // provider, otherwise a model locked via one spelling stays routable via the other.
@@ -687,11 +702,47 @@ function getModelLockKey(
   return `${canonicalProvider}:${connectionId}:${lockModel}`;
 }
 
+function getModelLockScopeKey(scope: ModelLockScope, reason?: string | null, status?: number | null) {
+  if (scope.kind === "provider-model") {
+    return `${PROVIDER_MODEL_LOCK_KEY_PREFIX}${getCanonicalLockProvider(scope.provider)}:${scope.model.trim().toLowerCase()}`;
+  }
+  return getModelLockKey(scope.provider, scope.connectionId, scope.model, reason, status);
+}
+
+function isProviderModelLockKey(key: string): boolean {
+  return key.startsWith(PROVIDER_MODEL_LOCK_KEY_PREFIX);
+}
+
 const buildExactKey = exactModelLock.buildExactModelLockKey; // see exactModelLock.ts
 const getModelLockKeys = exactModelLock.createGetModelLockKeys(
   getModelLockKey,
   getCanonicalLockProvider
 );
+
+function getQueryableModelLockKeys(provider: string, connectionId: string, model: string): string[] {
+  return [
+    ...getModelLockKeys(provider, connectionId, model),
+    getModelLockScopeKey({ kind: "provider-model", provider, model }),
+  ];
+}
+
+export type NetworkModelLockFailure = {
+  status: number;
+  reason: string;
+};
+
+export function getNetworkModelLockScope(
+  provider: string,
+  connectionId: string,
+  model: string,
+  failure: NetworkModelLockFailure
+): ModelLockScope {
+  return getCanonicalLockProvider(provider) === "gemini" &&
+    failure.status === 503 &&
+    failure.reason === RateLimitReason.MODEL_CAPACITY
+    ? { kind: "provider-model", provider, model }
+    : { kind: "connection-model", provider, connectionId, model };
+}
 
 function getFailureWindowMs(profile: ProviderProfile | null = null, fallbackMs = 30 * 60 * 1000) {
   const configured = profile?.resetTimeoutMs;
@@ -765,25 +816,13 @@ export function getModelLockoutSize(): number {
   return modelLockouts.size;
 }
 
-/**
- * Lock a specific model on a specific account
- * @param {string} provider
- * @param {string} connectionId
- * @param {string} model
- * @param {string} reason - from RateLimitReason
- * @param {number} cooldownMs
- */
-export function lockModel(
-  provider: string,
-  connectionId: string,
-  model: string | null | undefined,
+function writeModelLockout(
+  key: string,
   reason: string,
   cooldownMs: number,
   metadata: Partial<ModelLockoutEntry> = {}
 ): void {
-  if (!model) return; // No model → skip model-level locking
   ensureCleanupTimer();
-  const key = getModelLockKey(provider, connectionId, model, reason);
   cleanupModelLockKey(key);
   const newUntil = Date.now() + cooldownMs;
   // Preserve the longer cooldown if an existing lock has more time remaining.
@@ -808,6 +847,23 @@ export function lockModel(
     lastFailureAt: metadata.lastFailureAt ?? now,
     resetAfterMs: metadata.resetAfterMs ?? existing?.resetAfterMs ?? 0,
   });
+}
+
+export function lockModel(
+  provider: string,
+  connectionId: string,
+  model: string | null | undefined,
+  reason: string,
+  cooldownMs: number,
+  metadata: Partial<ModelLockoutEntry> = {}
+): void {
+  if (!model) return;
+  writeModelLockout(
+    getModelLockKey(provider, connectionId, model, reason),
+    reason,
+    cooldownMs,
+    metadata
+  );
 }
 
 // Lock only this exact provider/account/model tuple, never a quota family — see exactModelLock.ts.
@@ -835,6 +891,77 @@ export function selectLockoutCooldownMs(
   return settings.useExponentialBackoff ? 0 : settings.baseCooldownMs;
 }
 
+function recordModelLockoutFailureForKey({
+  key,
+  reason,
+  status,
+  fallbackCooldownMs,
+  profile = null,
+  exactCooldownMs,
+  maxCooldownMs: configuredMaxCooldownMs,
+  exactCooldownIsUpstreamReset,
+}: Omit<ModelLockoutFailureOptions, "scope"> & { key: string }) {
+  ensureCleanupTimer();
+  const now = Date.now();
+  cleanupModelLockKey(key, now);
+
+  const resolvedExactCooldownMs =
+    reason === "quota_exhausted" && typeof exactCooldownMs !== "number"
+      ? getMsUntilTomorrow()
+      : exactCooldownMs;
+
+  const resetAfterMs = getFailureWindowMs(profile);
+  const previous = modelFailureState.get(key);
+  // Include the previous cooldown so a failure just after expiry keeps escalating.
+  const withinWindow =
+    previous &&
+    now - previous.lastFailureAt <= previous.resetAfterMs + (previous.lastCooldownMs ?? 0);
+  const failureCount = withinWindow ? previous.failureCount + 1 : 1;
+  const baseCooldownMs = getModelLockBaseCooldown(status, fallbackCooldownMs, profile);
+  const maxCooldownMs =
+    typeof configuredMaxCooldownMs === "number" && configuredMaxCooldownMs > 0
+      ? configuredMaxCooldownMs
+      : null;
+  // Verified upstream resets override the cap; inferred and synthetic timings do not.
+  const cooldownMs =
+    typeof resolvedExactCooldownMs === "number" && resolvedExactCooldownMs > 0
+      ? maxCooldownMs !== null && !exactCooldownIsUpstreamReset
+        ? Math.min(resolvedExactCooldownMs, maxCooldownMs)
+        : resolvedExactCooldownMs
+      : Math.min(
+          getScaledCooldown(
+            baseCooldownMs,
+            failureCount,
+            profile?.maxBackoffSteps ?? BACKOFF_CONFIG.maxLevel
+          ),
+          maxCooldownMs ?? BACKOFF_CONFIG.max
+        );
+
+  modelFailureState.set(key, {
+    failureCount,
+    lastFailureAt: now,
+    resetAfterMs,
+    lastCooldownMs: cooldownMs,
+  });
+  writeModelLockout(key, reason, cooldownMs, {
+    failureCount,
+    lastFailureAt: now,
+    resetAfterMs,
+  });
+
+  return { cooldownMs, failureCount, resetAfterMs };
+}
+
+export function recordModelLockoutFailureForScope({
+  scope,
+  ...failure
+}: ModelLockoutFailureOptions) {
+  return recordModelLockoutFailureForKey({
+    key: getModelLockScopeKey(scope, failure.reason, failure.status),
+    ...failure,
+  });
+}
+
 export function recordModelLockoutFailure(
   provider: string,
   connectionId: string,
@@ -858,72 +985,20 @@ export function recordModelLockoutFailure(
     exactCooldownIsUpstreamReset?: boolean;
   } = {}
 ) {
-  ensureCleanupTimer();
   const key =
     options.scope === "exact"
       ? buildExactKey(getCanonicalLockProvider(provider), connectionId, model)
       : getModelLockKey(provider, connectionId, model, reason, status);
-  const now = Date.now();
-  cleanupModelLockKey(key, now);
-
-  // For daily quota exhaustion (quota_exhausted), set cooldown until tomorrow 00:00
-  // Use exactCooldownMs to bypass exponential backoff, ensuring precise lock until midnight
-  if (reason === "quota_exhausted" && typeof options.exactCooldownMs !== "number") {
-    options = { ...options, exactCooldownMs: getMsUntilTomorrow() };
-  }
-
-  const resetAfterMs = getFailureWindowMs(profile);
-  const previous = modelFailureState.get(key);
-  // Escalation window extends past the previously applied cooldown so a model
-  // that fails again right after its lockout expires keeps escalating.
-  const withinWindow =
-    previous &&
-    now - previous.lastFailureAt <= previous.resetAfterMs + (previous.lastCooldownMs ?? 0);
-  const failureCount = withinWindow ? previous.failureCount + 1 : 1;
-
-  const baseCooldownMs = getModelLockBaseCooldown(status, fallbackCooldownMs, profile);
-  // Cap both exponential backoff and computed exact cooldowns (e.g. daily-quota
-  // until-midnight, #7940/#7980) against maxCooldownMs so user-configured caps are
-  // honored — EXCEPT an authoritative parsed upstream reset (#6863, e.g. Antigravity
-  // "Resets in 92h27m28s"), which the upstream told us to wait and must be honored
-  // exactly, never clamped down to maxCooldownMs.
-  const maxCooldownMs =
-    typeof options.maxCooldownMs === "number" && options.maxCooldownMs > 0
-      ? options.maxCooldownMs
-      : null;
-  const cooldownMs =
-    typeof options.exactCooldownMs === "number" && options.exactCooldownMs > 0
-      ? maxCooldownMs !== null && !options.exactCooldownIsUpstreamReset
-        ? Math.min(options.exactCooldownMs, maxCooldownMs)
-        : options.exactCooldownMs
-      : Math.min(
-          getScaledCooldown(
-            baseCooldownMs,
-            failureCount,
-            profile?.maxBackoffSteps ?? BACKOFF_CONFIG.maxLevel
-          ),
-          maxCooldownMs ?? BACKOFF_CONFIG.max
-        );
-
-  modelFailureState.set(key, {
-    failureCount,
-    lastFailureAt: now,
-    resetAfterMs,
-    lastCooldownMs: cooldownMs,
+  return recordModelLockoutFailureForKey({
+    key,
+    reason,
+    status,
+    fallbackCooldownMs,
+    profile,
+    exactCooldownMs: options.exactCooldownMs,
+    maxCooldownMs: options.maxCooldownMs,
+    exactCooldownIsUpstreamReset: options.exactCooldownIsUpstreamReset,
   });
-
-  const lockFn = options.scope === "exact" ? lockExactModel : lockModel;
-  lockFn(provider, connectionId, model, reason, cooldownMs, {
-    failureCount,
-    lastFailureAt: now,
-    resetAfterMs,
-  });
-
-  return {
-    cooldownMs,
-    failureCount,
-    resetAfterMs,
-  };
 }
 
 export function clearModelLock(
@@ -935,7 +1010,7 @@ export function clearModelLock(
   return exactModelLock.clearMultiKeyLock(
     modelLockouts,
     modelFailureState,
-    getModelLockKeys(provider, connectionId, model)
+    getQueryableModelLockKeys(provider, connectionId, model)
   );
 }
 
@@ -1015,9 +1090,12 @@ export function shouldMarkAccountExhaustedFrom429(
   );
 }
 
-export function classifyLockoutReason(status: number): string {
+export function classifyLockoutReason(status: number, errorText = ""): string {
+  const textReason = classifyErrorText(errorText);
+  if (textReason !== RateLimitReason.UNKNOWN) return textReason;
   if (status === 429) return "rate_limit";
   if (status === 403) return "quota_exhausted";
+  if (status >= 500) return RateLimitReason.SERVER_ERROR;
   return "unknown";
 }
 
@@ -1026,23 +1104,30 @@ export type DecayResult = { cleared: boolean; newFailureCount: number };
 export function decayModelFailureCount(
   provider: string,
   connectionId: string,
-  model: string
+  model: string | null | undefined
 ): DecayResult {
-  const key = getModelLockKey(provider, connectionId, model);
-  const failure = modelFailureState.get(key);
-  if (!failure) return { cleared: false, newFailureCount: 0 };
-
-  const newFailureCount = Math.floor(failure.failureCount / 2);
-  if (newFailureCount === 0) {
-    modelFailureState.delete(key);
-    return { cleared: true, newFailureCount: 0 };
-  } else {
+  if (!model) return { cleared: false, newFailureCount: 0 };
+  let cleared = false;
+  let highestFailureCount = 0;
+  for (const key of getQueryableModelLockKeys(provider, connectionId, model)) {
+    const failure = modelFailureState.get(key);
+    if (!failure) continue;
+    const newFailureCount = Math.floor(failure.failureCount / 2);
+    if (newFailureCount === 0) {
+      modelFailureState.delete(key);
+      cleared = true;
+      if (isProviderModelLockKey(key)) {
+        modelLockouts.delete(key);
+      }
+      continue;
+    }
     modelFailureState.set(key, {
       ...failure,
       failureCount: newFailureCount,
     });
-    return { cleared: false, newFailureCount };
+    highestFailureCount = Math.max(highestFailureCount, newFailureCount);
   }
+  return { cleared, newFailureCount: highestFailureCount };
 }
 
 /**
@@ -1066,7 +1151,7 @@ export function isModelLocked(
   return exactModelLock.isAnyKeyLocked(
     modelLockouts,
     cleanupModelLockKey,
-    getModelLockKeys(provider, connectionId, model)
+    getQueryableModelLockKeys(provider, connectionId, model)
   );
 }
 
@@ -1082,7 +1167,7 @@ export function getModelLockoutInfo(
   const entry = exactModelLock.findLatestLockEntry(
     modelLockouts,
     cleanupModelLockKey,
-    getModelLockKeys(provider, connectionId, model)
+    getQueryableModelLockKeys(provider, connectionId, model)
   );
   if (!entry) return null;
   return {
@@ -1094,6 +1179,7 @@ export function getModelLockoutInfo(
 }
 
 export type ModelLockoutInfo = {
+  scope: ModelLockScope["kind"];
   provider: string;
   connectionId: string;
   model: string;
@@ -1114,9 +1200,13 @@ export function getAllModelLockouts(): ModelLockoutInfo[] {
     cleanupModelLockKey(key, now);
   }
   for (const [key, entry] of modelLockouts) {
-    const [provider, connectionId, ...modelParts] = key.split(":");
-    const model = modelParts.join(":");
+    const keyParts = key.split(":");
+    const providerModelScope = isProviderModelLockKey(key);
+    const provider = providerModelScope ? keyParts[1] : keyParts[0];
+    const connectionId = providerModelScope ? "*" : keyParts[1];
+    const model = keyParts.slice(2).join(":");
     active.push({
+      scope: providerModelScope ? "provider-model" : "connection-model",
       provider,
       connectionId,
       model,

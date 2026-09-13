@@ -66,6 +66,7 @@ export type AttemptLoopDeps = {
     maxGlobalAttempts?: unknown;
     hedging?: boolean;
     hedgeDelayMs?: unknown;
+    maxParallelTargets?: unknown;
   };
   log: ComboLogger;
   settings: Record<string, unknown> | null;
