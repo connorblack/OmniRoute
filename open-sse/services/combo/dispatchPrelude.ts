@@ -494,10 +494,7 @@ async function buildPinnedMemberPlan(args: {
     hedging,
     hedgeDelayMs: resolveDelayMs(policy.config.hedgeDelayMs, 500),
     maxParallelTargets: hedging
-      ? resolvePinnedMaxParallelTargets(
-          policy.combo.config?.maxParallelTargets,
-          candidates.length
-        )
+      ? resolvePinnedMaxParallelTargets(policy.combo.config?.maxParallelTargets, candidates.length)
       : 1,
   };
 }

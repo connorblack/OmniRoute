@@ -598,7 +598,13 @@ test("tryPinnedModelDispatch: hedges a pinned model across active accounts", asy
   });
 
   assert.ok(res.response);
-  assert.equal(await res.response.clone().json().then((body) => body.choices[0].message.content), "fast");
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
   assert.equal(calls.length, 2);
   assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
   assert.equal(maxActive, 2);
@@ -667,7 +673,13 @@ test("tryPinnedModelDispatch: applies an executable child combo's account hedge 
   });
 
   assert.ok(res.response);
-  assert.equal(await res.response.clone().json().then((body) => body.choices[0].message.content), "fast");
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
   assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
 });
 
@@ -745,7 +757,13 @@ test("tryPinnedModelDispatch: bounds account hedges and honors the API key allow
   });
 
   assert.ok(res.response);
-  assert.equal(await res.response.clone().json().then((body) => body.choices[0].message.content), "fast");
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
   assert.deepEqual(new Set(calls), new Set(allowedConnections));
   assert.equal(calls.includes(connections[3].id), false);
   assert.equal(maxActive, 2);
