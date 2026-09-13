@@ -266,9 +266,24 @@ test("Gemini bare 500 leaves the model and connection selectable", async () => {
 });
 
 for (const failure of [
-  { status: 502, label: "local 502", message: "Local queue capacity exceeded" },
-  { status: 503, label: "generic 503", message: "Upstream service unavailable" },
-  { status: 504, label: "generic 504", message: "Upstream request timed out" },
+  {
+    status: 502,
+    label: "local 502",
+    message: "Local queue capacity exceeded",
+    reason: "server_error",
+  },
+  {
+    status: 503,
+    label: "generic 503",
+    message: "Upstream service unavailable",
+    reason: "server_error",
+  },
+  {
+    status: 504,
+    label: "generic 504",
+    message: "Upstream request timed out",
+    reason: "server_error",
+  },
 ]) {
   test(`Gemini ${failure.label} remains connection-model scoped`, async () => {
     const connectionA = await createGeminiConnection(`ai-studio-${failure.status}-a`);
@@ -293,7 +308,8 @@ for (const failure of [
             entry.provider === "gemini" &&
             entry.scope === "connection-model" &&
             entry.connectionId === connectionA.id &&
-            entry.model === model
+            entry.model === model &&
+            entry.reason === failure.reason
         ),
       true
     );
