@@ -457,9 +457,10 @@ async function attemptPinnedMember(args: {
           : "",
       fingerprint: member ? (resolveTargetFingerprint(member) ?? "") : "",
     });
-    result = await handleSingleModelWithTimeout(memberBody, modelStr, {
-      modelPinned: true,
-    } as SingleModelTarget);
+    const target: SingleModelTarget = member
+      ? { ...member, modelPinned: true }
+      : ({ modelPinned: true } as SingleModelTarget);
+    result = await handleSingleModelWithTimeout(memberBody, modelStr, target);
   } catch (err) {
     log.warn(
       "COMBO",
