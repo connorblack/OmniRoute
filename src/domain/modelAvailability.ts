@@ -6,13 +6,14 @@ import {
 
 export type AvailabilityReportItem = Pick<
   ModelLockoutInfo,
-  "provider" | "model" | "reason" | "remainingMs" | "failureCount"
+  "scope" | "provider" | "model" | "reason" | "remainingMs" | "failureCount"
 > & {
   connectionId: string;
 };
 
 export function getAvailabilityReport(): AvailabilityReportItem[] {
   return getAllModelLockouts().map((entry) => ({
+    scope: entry.scope,
     provider: entry.provider,
     model: entry.model,
     connectionId: entry.connectionId,

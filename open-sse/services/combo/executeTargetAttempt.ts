@@ -462,7 +462,7 @@ export async function executeTargetAttempt(opts: {
       if (provider && rawModel) {
         const dcResult = decayModelFailureCount(provider, effectiveConnectionId, rawModel);
         if (dcResult.cleared) {
-          deps.log.info("COMBO", `Model ${modelStr} fully recovered — lockout cleared`);
+          deps.log.info("COMBO", `Model ${modelStr} failure counter cleared after recovery`);
         } else if (dcResult.newFailureCount > 0) {
           deps.log.debug(
             "COMBO",

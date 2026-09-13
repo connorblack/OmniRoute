@@ -726,14 +726,20 @@ function getQueryableModelLockKeys(provider: string, connectionId: string, model
   ];
 }
 
+export type NetworkModelLockFailure = {
+  status: number;
+  reason: string;
+};
+
 export function getNetworkModelLockScope(
   provider: string,
   connectionId: string,
   model: string,
-  status: number
+  failure: NetworkModelLockFailure
 ): ModelLockScope {
-  // AI Studio server failures above bare 500 reflect shared model capacity, not per-key quota.
-  return getCanonicalLockProvider(provider) === "gemini" && status > 500
+  return getCanonicalLockProvider(provider) === "gemini" &&
+    failure.status === 503 &&
+    failure.reason === RateLimitReason.MODEL_CAPACITY
     ? { kind: "provider-model", provider, model }
     : { kind: "connection-model", provider, connectionId, model };
 }
@@ -1084,9 +1090,12 @@ export function shouldMarkAccountExhaustedFrom429(
   );
 }
 
-export function classifyLockoutReason(status: number): string {
+export function classifyLockoutReason(status: number, errorText = ""): string {
+  const textReason = classifyErrorText(errorText);
+  if (textReason !== RateLimitReason.UNKNOWN) return textReason;
   if (status === 429) return "rate_limit";
   if (status === 403) return "quota_exhausted";
+  if (status >= 500) return RateLimitReason.SERVER_ERROR;
   return "unknown";
 }
 
@@ -1106,9 +1115,9 @@ export function decayModelFailureCount(
     const newFailureCount = Math.floor(failure.failureCount / 2);
     if (newFailureCount === 0) {
       modelFailureState.delete(key);
+      cleared = true;
       if (isProviderModelLockKey(key)) {
         modelLockouts.delete(key);
-        cleared = true;
       }
       continue;
     }
@@ -1170,6 +1179,7 @@ export function getModelLockoutInfo(
 }
 
 export type ModelLockoutInfo = {
+  scope: ModelLockScope["kind"];
   provider: string;
   connectionId: string;
   model: string;
@@ -1196,6 +1206,7 @@ export function getAllModelLockouts(): ModelLockoutInfo[] {
     const connectionId = providerModelScope ? "*" : keyParts[1];
     const model = keyParts.slice(2).join(":");
     active.push({
+      scope: providerModelScope ? "provider-model" : "connection-model",
       provider,
       connectionId,
       model,

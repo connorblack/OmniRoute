@@ -186,13 +186,17 @@ export async function GET(req: NextRequest) {
       console.error("[API] resilience/connections lockout module error:", err);
     }
 
-    // Join all sources AFTER all fetches complete (so toConnectionState has full context)
-    // NOTE: If multiple breaker instances resolve to the same canonical provider (e.g., alias + canonical),
-    // the last one wins in the map. This is an accepted limitation -- connections typically have one
-    // active breaker per provider. The top-level breakers[] array preserves all instances.
+    const canonicalProviderFilter = provider ? resolveProviderId(provider) : null;
+    const providerModelLockouts = lockouts.filter(
+      (lockout) =>
+        lockout.scope === "provider-model" &&
+        (!canonicalProviderFilter || resolveProviderId(lockout.provider) === canonicalProviderFilter)
+    );
+
     const breakersMap = new Map(breakers.map((b) => [resolveProviderId(b.name), b]));
     const lockoutsMap = new Map<string, ModelLockoutInfo[]>();
     for (const l of lockouts) {
+      if (l.scope !== "connection-model") continue;
       const arr = lockoutsMap.get(l.connectionId) ?? [];
       arr.push(l);
       lockoutsMap.set(l.connectionId, arr);
@@ -234,6 +238,7 @@ export async function GET(req: NextRequest) {
     // Assemble response (top-level fields, no `data` wrapper -- matches ResilienceConnectionsResponse)
     const response: ResilienceConnectionsResponse = {
       connections,
+      providerModelLockouts,
       breakers,
       window: windowMeta,
       meta: { totalConnections, coolingDownCount, unhealthyBreakerCount, countsCapped, degraded },
