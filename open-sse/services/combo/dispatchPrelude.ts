@@ -346,19 +346,6 @@ async function buildSemaphoreGate(
   };
 }
 
-/**
- * The semaphore gate a LIVE (unpinned) round-robin dispatch of `member` would
- * use — same key format and limits roundRobinCombo.ts computes
- * (`combo:${name}:${executionKey}`, concurrencyPerModel/queueTimeoutMs/
- * queueDepth). Pinned dispatch used to bypass roundRobinCombo.ts entirely, so
- * a pinned session's in-flight request was invisible to the per-model
- * concurrency cap it enforces. Returns null when neither the combo being
- * dispatched nor the single nested tier `member` runs under is round-robin —
- * there is no gate for a pinned attempt to join.
- *
- * Resolves at most one level of nesting (the combo-ref tier `member` lives
- * directly under, matching resolvePinnedTier's own tier boundary).
- */
 type PinnedMemberPolicy = {
   combo: ComboLike;
   strategy: string;
@@ -507,7 +494,10 @@ async function buildPinnedMemberPlan(args: {
     hedging,
     hedgeDelayMs: resolveDelayMs(policy.config.hedgeDelayMs, 500),
     maxParallelTargets: hedging
-      ? resolvePinnedMaxParallelTargets(policy.config.maxParallelTargets, candidates.length)
+      ? resolvePinnedMaxParallelTargets(
+          policy.combo.config?.maxParallelTargets,
+          candidates.length
+        )
       : 1,
   };
 }
