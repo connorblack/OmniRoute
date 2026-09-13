@@ -605,6 +605,72 @@ test("tryPinnedModelDispatch: hedges a pinned model across active accounts", asy
   assert.equal(slowAbortObserved, true);
 });
 
+test("tryPinnedModelDispatch: applies an executable child combo's account hedge policy", async () => {
+  const provider = "nestedpinnedhedge";
+  const first = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-hedge-slow",
+    isActive: true,
+    apiKey: "test-nested-pinned-hedge-slow",
+  });
+  const second = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-hedge-fast",
+    isActive: true,
+    apiKey: "test-nested-pinned-hedge-fast",
+  });
+  invalidateDbCache();
+
+  const model = `${provider}/deepseek`;
+  const child: ComboInput = {
+    name: "nested-pinned-hedge-child",
+    strategy: "random",
+    models: [{ model }],
+    config: {
+      connectionAwareExpansion: true,
+      zeroLatencyOptimizationsEnabled: true,
+      hedging: true,
+      hedgeDelayMs: 5,
+      maxParallelTargets: 2,
+    },
+  };
+  const root: ComboInput = {
+    name: "nested-pinned-hedge-root",
+    strategy: "priority",
+    models: [{ kind: "combo-ref", comboName: child.name }],
+    config: { nestedComboMode: "execute" },
+  };
+  const ctx = setup(root);
+  const calls: string[] = [];
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: root,
+    pinnedModel: model,
+    allCombos: [root, child],
+    config: ctx.config,
+    strategy: "priority",
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      const connectionId = target && "connectionId" in target ? target.connectionId : null;
+      assert.ok(connectionId);
+      calls.push(connectionId);
+      if (calls.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return okResponse("slow");
+      }
+      return okResponse("fast");
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(await res.response.clone().json().then((body) => body.choices[0].message.content), "fast");
+  assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
+});
+
 test("tryPinnedModelDispatch: expands the combo system_message template on the pinned path (#5501)", async () => {
   const ctx = setup({
     name: "pinned-combo",
