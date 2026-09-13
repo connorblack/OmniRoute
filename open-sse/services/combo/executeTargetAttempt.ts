@@ -7,7 +7,6 @@
  */
 import {
   checkFallbackError,
-  classifyLockoutReason,
   decayModelFailureCount,
   hasPerModelQuota,
   isModelLocked,
@@ -15,8 +14,6 @@ import {
   recordModelLockoutFailure,
   recordProviderFailure,
   recordProviderSuccess,
-  retryHintBypassesMaxCooldownMs,
-  selectLockoutCooldownMs,
 } from "../accountFallback.ts";
 import { errorResponse, errorResponseWithComboDiagnostics } from "../../utils/error.ts";
 import { recordComboFailure, clearComboFailureTracking } from "./failureTracker.ts";
@@ -847,23 +844,6 @@ export async function executeTargetAttempt(opts: {
       structuredError
     );
     const { cooldownMs } = fallbackResult;
-    // #6863: a parsed upstream quota reset (e.g. Antigravity "Resets in 92h27m28s")
-    // arrives in `quotaResetHintMs` — it bypasses the operator-gated
-    // `useUpstreamRetryHints` connection-cooldown setting. Mirror the
-    // single-model path (src/sse/services/auth.ts): when the retry hint was
-    // already honored, `cooldownMs` IS the upstream value; otherwise prefer the
-    // parsed quota reset — even when it is SHORTER than the fallback cooldown
-    // (e.g. subscription-quota 1h default vs a real "resets in 10m").
-    // `selectLockoutCooldownMs` still ignores hints at/below the base cooldown,
-    // so absent/tiny hints keep the #1308 exponential-backoff behavior.
-    const lockoutHintMs =
-      fallbackResult.usedUpstreamRetryHint === true
-        ? cooldownMs
-        : (fallbackResult.quotaResetHintMs ?? 0);
-    // Only a transport header or google.rpc.RetryInfo is authoritative enough
-    // to bypass maxCooldownMs. Prose and generic JSON remain useful exact hints,
-    // but the operator cap still bounds them.
-    const lockoutHintVerified = retryHintBypassesMaxCooldownMs(fallbackResult.retryHintSource);
     const selectedConnectionId =
       result.headers?.get("X-OmniRoute-Selected-Connection-Id") ||
       result.headers?.get("x-omniroute-selected-connection-id") ||
@@ -1063,45 +1043,7 @@ export async function executeTargetAttempt(opts: {
         if (i > 0) state.fallbackCount++;
         return null;
       }
-      // Record model lockout immediately on the first transient failure —
-      // once the model is cooling down, retrying it would waste an upstream
-      // call and extend the cooldown via exponential backoff.
-      let lockoutRecorded = false;
-      if (!protectedPriorityTarget && provider && rawModel && retry === 0 && !scopedFailure) {
-        const mlSettings = resolveModelLockoutSettings(deps.settings);
-        if (mlSettings.enabled && mlSettings.errorCodes.includes(result.status)) {
-          recordModelLockoutFailure(
-            provider,
-            targetWithConnection.connectionId || "",
-            rawModel,
-            classifyLockoutReason(result.status),
-            result.status,
-            mlSettings.baseCooldownMs,
-            profile,
-            {
-              // #1308/#6863: honor a long upstream reset (e.g. "Resets in 160h") over
-              // the short base cooldown / exponential backoff when present. #7940's
-              // maxCooldownMs cap only applies to synthetic values — a verified
-              // upstream reset (lockoutHintVerified) bypasses it.
-              exactCooldownMs: selectLockoutCooldownMs(lockoutHintMs, mlSettings),
-              maxCooldownMs: mlSettings.maxCooldownMs,
-              // Preserve authoritative structured/header resets; clamp body prose.
-              exactCooldownIsUpstreamReset: lockoutHintVerified,
-            }
-          );
-          lockoutRecorded = true;
-        }
-      }
-      if (lockoutRecorded) {
-        deps.log.info("COMBO", `Skipping retry for ${modelStr} — model lockout active`);
-        // Same fix as the already-locked branch above — this is the
-        // first-failure lockout path, so lastStatus needs recording here too.
-        state.lastError = errorText || String(result.status);
-        state.lastStatus = result.status;
-        if (i > 0) state.fallbackCount++;
-        return null;
-      }
-      continue; // Retry same model (transient error, no lockout recorded)
+      continue;
     }
 
     // Done retrying this model
@@ -1143,31 +1085,6 @@ export async function executeTargetAttempt(opts: {
     });
     state.lastStatus = result.status;
     if (i > 0) state.fallbackCount++;
-    // Wire combo failures into the resilience dashboard (model-level lockout)
-    // alongside the provider-level cooldown below — they govern different scopes.
-    if (provider && rawModel && !scopedFailure) {
-      const mlSettings = resolveModelLockoutSettings(deps.settings);
-      if (mlSettings.enabled && mlSettings.errorCodes.includes(result.status)) {
-        recordModelLockoutFailure(
-          provider,
-          targetWithConnection.connectionId || "",
-          rawModel,
-          classifyLockoutReason(result.status),
-          result.status,
-          mlSettings.baseCooldownMs,
-          profile,
-          {
-            // #1308/#6863: honor a long upstream reset over base/exponential cooldown.
-            // #7940's maxCooldownMs cap only applies to synthetic values — a verified
-            // upstream reset (lockoutHintVerified) bypasses it.
-            exactCooldownMs: selectLockoutCooldownMs(lockoutHintMs, mlSettings),
-            maxCooldownMs: mlSettings.maxCooldownMs,
-            // Preserve authoritative structured/header resets; clamp body prose.
-            exactCooldownIsUpstreamReset: lockoutHintVerified,
-          }
-        );
-      }
-    }
     deps.log.warn("COMBO", `Model ${modelStr} failed, trying next`, {
       status: result.status,
       errorBody: redactConnectionLabel(errorText),
