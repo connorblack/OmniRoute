@@ -162,6 +162,7 @@ test("getAllModelLockouts: returns active lockouts", () => {
   const found = lockouts.find((l) => l.model === "test-model");
   assert.ok(found);
   assert.equal(found.provider, "test-provider");
+  assert.equal(found.scope, "connection-model");
 });
 
 // ─── checkFallbackError Tests ────────────────────────────────────────────────

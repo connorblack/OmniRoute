@@ -20,7 +20,11 @@ import {
   getCircuitBreaker,
   resetAllCircuitBreakers,
 } from "../../src/shared/utils/circuitBreaker.ts";
-import { lockModel, clearAllModelLockouts } from "../../open-sse/services/accountFallback.ts";
+import {
+  lockModel,
+  recordModelLockoutFailureForScope,
+  clearAllModelLockouts,
+} from "../../open-sse/services/accountFallback.ts";
 import * as routeGuard from "../../src/server/authz/routeGuard.ts";
 
 // Import the route AFTER env/db setup so its module-level bindings see the
@@ -215,6 +219,48 @@ test("lockout joined to correct connection by connectionId", async () => {
   assert.equal(c1.lockouts.length, 1, "conn-1 should have 1 lockout");
   assert.equal(c1.lockouts[0].model, "gpt-4");
   assert.equal(c2.lockouts.length, 0, "conn-2 should have no lockouts");
+});
+
+test("provider-model lockout is returned separately from connection rows", async () => {
+  const firstId = await seedConnection({
+    provider: "gemini",
+    authType: "apikey",
+    name: "gemini-shared-a",
+    priority: 1,
+  });
+  const secondId = await seedConnection({
+    provider: "gemini",
+    authType: "apikey",
+    name: "gemini-shared-b",
+    priority: 2,
+  });
+  recordModelLockoutFailureForScope({
+    scope: { kind: "provider-model", provider: "gemini", model: "gemini-3.8-flash" },
+    reason: "model_capacity",
+    status: 503,
+    fallbackCooldownMs: 60_000,
+    exactCooldownMs: 60_000,
+  });
+
+  const body = await json(await GET(makeReq("?provider=gemini")));
+  assert.equal(findConn(body, firstId).lockouts.length, 0);
+  assert.equal(findConn(body, secondId).lockouts.length, 0);
+  assert.deepEqual(
+    body.providerModelLockouts.map((lockout) => ({
+      scope: lockout.scope,
+      connectionId: lockout.connectionId,
+      model: lockout.model,
+      reason: lockout.reason,
+    })),
+    [
+      {
+        scope: "provider-model",
+        connectionId: "*",
+        model: "gemini-3.8-flash",
+        reason: "model_capacity",
+      },
+    ]
+  );
 });
 
 test("orphan lockout (no matching connection) is filtered out", async () => {

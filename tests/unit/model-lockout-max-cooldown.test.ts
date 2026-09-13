@@ -25,13 +25,6 @@ function createLog() {
   };
 }
 
-function errorResponse(status: number, message: string = `Error ${status}`) {
-  return new Response(JSON.stringify({ error: { message } }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
 async function seedConnection(provider: string, overrides: any = {}): Promise<any> {
   return providersDb.createProviderConnection({
     provider,
@@ -146,11 +139,18 @@ test("handleComboChat quality failure model lockout honors maxCooldownMs setting
         name: "test-combo",
         strategy: "priority",
         models: [`${provider}/${model}`],
-        config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
+        config: {
+          maxRetries: 0,
+          retryDelayMs: 0,
+          fallbackDelayMs: 0,
+          responseValidation: { minContentLength: 100 },
+        },
       },
-      handleSingleModel: async () => {
-        return errorResponse(502);
-      },
+      handleSingleModel: async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: "short" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       isModelAvailable: async () => true,
       log: logs as any,
       settings: customSettings,

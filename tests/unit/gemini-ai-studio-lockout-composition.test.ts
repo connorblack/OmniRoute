@@ -25,6 +25,9 @@ const core = await import("../../src/lib/db/core.ts");
 const providersDb = await import("../../src/lib/db/providers.ts");
 const auth = await import("../../src/sse/services/auth.ts");
 
+const AI_STUDIO_HIGH_DEMAND =
+  "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.";
+
 function target(connectionId: string, model = "gemini-2.5-pro"): ResolvedComboTarget {
   return {
     kind: "model",
@@ -139,7 +142,7 @@ test("one Gemini AI Studio 503 locks that model across sibling keys exactly once
         await auth.markAccountUnavailable(
           connectionA.id,
           503,
-          "upstream service unavailable",
+          AI_STUDIO_HIGH_DEMAND,
           "gemini",
           modelM,
           null,
@@ -149,7 +152,7 @@ test("one Gemini AI Studio 503 locks that model across sibling keys exactly once
         );
         return new Response(
           JSON.stringify({
-            error: { message: "upstream service unavailable", type: "server_error" },
+            error: { message: AI_STUDIO_HIGH_DEMAND, type: "server_error" },
           }),
           {
             status: 503,
@@ -213,8 +216,10 @@ test("one Gemini AI Studio 503 locks that model across sibling keys exactly once
       .some(
         (entry) =>
           entry.provider === "gemini" &&
+          entry.scope === "provider-model" &&
           entry.connectionId === "*" &&
           entry.model === modelM &&
+          entry.reason === "model_capacity" &&
           entry.failureCount === 1
       ),
     true
@@ -241,6 +246,60 @@ test("one Gemini AI Studio 503 locks that model across sibling keys exactly once
   assert.equal(fallback.isModelLocked("gemini", String(connectionA.id), modelM), false);
 });
 
+test("Gemini bare 500 leaves the model and connection selectable", async () => {
+  const connectionA = await createGeminiConnection("ai-studio-500-a");
+  const connectionB = await createGeminiConnection("ai-studio-500-b");
+  const model = "gemini-3.8-flash";
+
+  await auth.markAccountUnavailable(
+    connectionA.id,
+    500,
+    "Internal server error",
+    "gemini",
+    model
+  );
+
+  const selection = await auth.getProviderCredentials("gemini", null, null, model);
+  assert.equal(fallback.isModelLocked("gemini", connectionA.id, model), false);
+  assert.equal(fallback.isModelLocked("gemini", connectionB.id, model), false);
+  assert.equal("allRateLimited" in selection && selection.allRateLimited, false);
+});
+
+for (const failure of [
+  { status: 502, label: "local 502", message: "Local queue capacity exceeded" },
+  { status: 503, label: "generic 503", message: "Upstream service unavailable" },
+  { status: 504, label: "generic 504", message: "Upstream request timed out" },
+]) {
+  test(`Gemini ${failure.label} remains connection-model scoped`, async () => {
+    const connectionA = await createGeminiConnection(`ai-studio-${failure.status}-a`);
+    const connectionB = await createGeminiConnection(`ai-studio-${failure.status}-b`);
+    const model = "gemini-3.8-flash";
+
+    await auth.markAccountUnavailable(
+      connectionA.id,
+      failure.status,
+      failure.message,
+      "gemini",
+      model
+    );
+
+    assert.equal(fallback.isModelLocked("gemini", connectionA.id, model), true);
+    assert.equal(fallback.isModelLocked("gemini", connectionB.id, model), false);
+    assert.equal(
+      fallback
+        .getAllModelLockouts()
+        .some(
+          (entry) =>
+            entry.provider === "gemini" &&
+            entry.scope === "connection-model" &&
+            entry.connectionId === connectionA.id &&
+            entry.model === model
+        ),
+      true
+    );
+  });
+}
+
 test("Gemini recovery clears provider scope without clearing a live connection scope", async () => {
   const connectionA = await createGeminiConnection("ai-studio-mixed-scope-a");
   const connectionB = await createGeminiConnection("ai-studio-mixed-scope-b");
@@ -250,7 +309,7 @@ test("Gemini recovery clears provider scope without clearing a live connection s
   await auth.markAccountUnavailable(
     connectionA.id,
     503,
-    "upstream service unavailable",
+    AI_STUDIO_HIGH_DEMAND,
     "gemini",
     model
   );
