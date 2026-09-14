@@ -62,7 +62,9 @@ const PARAM_REF_PREFIX = "#/components/parameters/";
 function resolveParam(p) {
   if (p && typeof p === "object" && typeof p.$ref === "string") {
     if (!p.$ref.startsWith(PARAM_REF_PREFIX)) {
-      throw new Error(`Unsupported parameter $ref (only ${PARAM_REF_PREFIX}* is resolved): ${p.$ref}`);
+      throw new Error(
+        `Unsupported parameter $ref (only ${PARAM_REF_PREFIX}* is resolved): ${p.$ref}`
+      );
     }
     const name = p.$ref.slice(PARAM_REF_PREFIX.length);
     const resolved = spec.components?.parameters?.[name];
@@ -74,7 +76,7 @@ function resolveParam(p) {
   return p;
 }
 
-/** @type {Record<string, Array<{path: string, method: string, opId: string, op: object}>>} */
+/** @type {Record<string, Array<{path: string, method: string, opId: string, op: object, pathParameters: object[]}>>} */
 const byTag = {};
 
 for (const [path, methods] of Object.entries(spec.paths || {})) {
@@ -92,7 +94,13 @@ for (const [path, methods] of Object.entries(spec.paths || {})) {
     const opId = op.operationId || `${method}-${path.replace(/[^a-z0-9]/gi, "-")}`;
 
     byTag[tag] = byTag[tag] || [];
-    byTag[tag].push({ path, method, opId, op });
+    byTag[tag].push({
+      path,
+      method,
+      opId,
+      op,
+      pathParameters: Array.isArray(methods.parameters) ? methods.parameters : [],
+    });
   }
 }
 
@@ -102,7 +110,7 @@ for (const [tag, ops] of Object.entries(byTag)) {
   const fnName = `register_${tag.replace(/-/g, "_")}`;
   const lines = [
     `// AUTO-GENERATED from ${SPEC_PATH.replace(ROOT + "/", "")}. Do not edit.`,
-    `import { apiFetch } from "../api.mjs";`,
+    `import { apiFetch, readApiResponse } from "../api.mjs";`,
     `import { emit } from "../output.mjs";`,
     `import { readFileSync } from "node:fs";`,
     ``,
@@ -110,9 +118,12 @@ for (const [tag, ops] of Object.entries(byTag)) {
     `  const tag = parent.command("${tag}").description("${escapeStr(ops[0]?.op?.tags?.[0] || tag)} endpoints");`,
   ];
 
-  for (const { path, method, opId, op } of ops) {
+  for (const { path, method, opId, op, pathParameters } of ops) {
     const cmdName = kebab(opId);
-    const params = (op.parameters || []).map(resolveParam);
+    const mergedParams = [...pathParameters, ...(op.parameters || [])].map(resolveParam);
+    const params = [
+      ...new Map(mergedParams.map((param) => [`${param.in}:${param.name}`, param])).values(),
+    ];
     const pathParams = params.filter((p) => p.in === "path");
     const queryParams = params.filter((p) => p.in === "query");
     const hasBody = !!op.requestBody;
@@ -131,9 +142,7 @@ for (const [tag, ops] of Object.entries(byTag)) {
     }
     if (hasBody) {
       const bodyFlag = op.requestBody.required ? "requiredOption" : "option";
-      lines.push(
-        `    .${bodyFlag}("--body <jsonOrPath>", "JSON body or @path/to/file.json")`
-      );
+      lines.push(`    .${bodyFlag}("--body <jsonOrPath>", "JSON body or @path/to/file.json")`);
     }
     lines.push(`    .action(async (opts, cmd) => {`);
     lines.push(`      const gOpts = cmd.optsWithGlobals();`);
@@ -166,9 +175,9 @@ for (const [tag, ops] of Object.entries(byTag)) {
     }
     const bodyArg = hasBody ? ", body" : "";
     lines.push(
-      `      const res = await apiFetch(url, { method: "${method.toUpperCase()}"${hasBody ? ", body" : ""}, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });`
+      `      const res = await apiFetch(url, { ...gOpts, method: "${method.toUpperCase()}"${hasBody ? ", body" : ""}, timeout: Number.parseInt(gOpts.timeout, 10) });`
     );
-    lines.push(`      const data = res.ok ? await res.json() : await res.text();`);
+    lines.push(`      const data = await readApiResponse(res);`);
     lines.push(`      emit(data, gOpts);`);
     lines.push(`    });`);
   }

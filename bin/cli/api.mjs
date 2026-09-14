@@ -286,6 +286,14 @@ function extractErrorMessage(payload, status) {
   return `HTTP ${status}`;
 }
 
+export async function readApiResponse(res, { acceptNotOk = false } = {}) {
+  const payload = await readResponseBody(res);
+  if (!res.ok && !acceptNotOk) {
+    throw new ApiError(extractErrorMessage(payload, res.status), { status: res.status });
+  }
+  return payload;
+}
+
 function normalizeNetworkError(err) {
   if (err instanceof ApiError) return err;
   const code = err?.code || (err?.name === "AbortError" ? "ETIMEDOUT" : undefined);

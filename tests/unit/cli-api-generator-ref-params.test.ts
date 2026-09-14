@@ -203,5 +203,5 @@ test("real generated combo-test command accepts and forwards its required reques
   const testBlock = testBlockMatch[0];
 
   assert.match(testBlock, /\.requiredOption\("--body <jsonOrPath>"/);
-  assert.match(testBlock, /const res = await apiFetch\(url, \{ method: "POST", body,/);
+  assert.match(testBlock, /const res = await apiFetch\(url, \{ \.\.\.gOpts, method: "POST", body,/);
 });

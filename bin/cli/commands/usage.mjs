@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit, maskSecret } from "../output.mjs";
 import { t } from "../i18n.mjs";
 
@@ -150,41 +150,42 @@ export async function runBudgetGet(scope, opts, cmd) {
 
 export async function runBudgetSet(amount, opts, cmd) {
   const globalOpts = cmd.optsWithGlobals();
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
   const res = await apiFetch("/api/usage/budget", {
+    ...globalOpts,
     method: "POST",
     body: {
       amount: Number(amount),
       scope: opts.scope ?? "global",
       period: opts.period ?? "monthly",
     },
-    timeout: globalOpts.timeout,
-    acceptNotOk: true,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
   });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    process.stderr.write(`[error] HTTP ${res.status}: ${txt.slice(0, 200)}\n`);
-    process.exit(res.exitCode ?? 1);
-  }
-  if (!globalOpts.quiet)
+  const data = await readApiResponse(res);
+  if (globalOpts.output !== "table") {
+    emit(data, globalOpts);
+  } else if (!globalOpts.quiet) {
     process.stdout.write(
       `Budget set: $${Number(amount).toFixed(2)} / ${opts.scope ?? "global"} / ${opts.period ?? "monthly"}\n`
     );
+  }
 }
 
 export async function runBudgetReset(scope, opts, cmd) {
   const globalOpts = cmd.optsWithGlobals();
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
   const res = await apiFetch("/api/usage/budget", {
+    ...globalOpts,
     method: "DELETE",
     body: { scope: scope ?? "global" },
-    timeout: globalOpts.timeout,
-    acceptNotOk: true,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
   });
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    process.stderr.write(`[error] HTTP ${res.status}: ${txt.slice(0, 200)}\n`);
-    process.exit(res.exitCode ?? 1);
+  const data = await readApiResponse(res);
+  if (globalOpts.output !== "table") {
+    emit(data, globalOpts);
+  } else if (!globalOpts.quiet) {
+    process.stdout.write(`Budget reset: ${scope ?? "global"}\n`);
   }
-  if (!globalOpts.quiet) process.stdout.write(`Budget reset: ${scope ?? "global"}\n`);
 }
 
 export async function runUsageQuota(opts, cmd) {
@@ -218,8 +219,9 @@ export async function runUsageLogs(opts, cmd) {
   const p = buildLogParams(opts);
   const res = await fetchOrExit(`/api/usage/call-logs?${p}`, globalOpts);
   const data = await res.json();
-  const rows = toLogRows(toArray(data.logs ?? data.items ?? data));
-  emit(rows, globalOpts, logsSchema);
+  const items = toArray(data.logs ?? data.items ?? data);
+  const rows = globalOpts.output === "table" ? toLogRows(items) : items;
+  emit(rows, globalOpts, globalOpts.output === "table" ? logsSchema : null);
 }
 
 export async function runUsageUtilization(opts, cmd) {
@@ -259,17 +261,21 @@ async function followLogs(opts, globalOpts) {
     while (true) {
       const p = buildLogParams({ ...opts, limit: opts.limit ?? 20 });
       if (lastId) p.append("afterId", String(lastId));
+      const timeout = Number.parseInt(globalOpts.timeout, 10);
       const res = await apiFetch(`/api/usage/call-logs?${p}`, {
-        timeout: globalOpts.timeout,
-        acceptNotOk: true,
+        ...globalOpts,
+        timeout: Number.isFinite(timeout) ? timeout : undefined,
       });
-      if (res.ok) {
-        const data = await res.json();
-        const rows = toLogRows(toArray(data.logs ?? data.items ?? data));
-        if (rows.length > 0) {
-          emit(rows, { ...globalOpts, quiet: true }, logsSchema);
-          lastId = rows[rows.length - 1]?.id ?? lastId;
-        }
+      const data = await readApiResponse(res);
+      const items = toArray(data.logs ?? data.items ?? data);
+      const rows = globalOpts.output === "table" ? toLogRows(items) : items;
+      if (rows.length > 0) {
+        emit(
+          rows,
+          { ...globalOpts, quiet: true },
+          globalOpts.output === "table" ? logsSchema : null
+        );
+        lastId = items[items.length - 1]?.id ?? lastId;
       }
       await sleep(2000);
     }
@@ -314,15 +320,12 @@ function normalizeBudgetRows(data) {
 }
 
 async function fetchOrExit(path, globalOpts) {
-  const res = await apiFetch(path, { timeout: globalOpts.timeout, acceptNotOk: true });
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      process.stderr.write(t("common.authRequired") + "\n");
-    } else {
-      process.stderr.write(t("common.serverOffline") + "\n");
-    }
-    process.exit(res.exitCode ?? 1);
-  }
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
+  const res = await apiFetch(path, {
+    ...globalOpts,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
+  });
+  await res.assertOk();
   return res;
 }
 

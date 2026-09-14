@@ -181,7 +181,8 @@ test("runUsageLogs --output json retorna rows com campos esperados", async () =>
   assert.ok(Array.isArray(parsed));
   assert.equal(parsed.length, 2);
   assert.ok(typeof parsed[0].provider === "string");
-  assert.ok(typeof parsed[0].tokens === "number");
+  assert.equal(parsed[0].tokensIn, 100);
+  assert.equal(parsed[0].tokensOut, 50);
 });
 
 test("runUsageHistory exibe histórico", async () => {
