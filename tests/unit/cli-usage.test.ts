@@ -178,11 +178,12 @@ test("runUsageLogs --output json retorna rows com campos esperados", async () =>
 
   globalThis.fetch = origFetch;
   const parsed = JSON.parse(out);
-  assert.ok(Array.isArray(parsed));
-  assert.equal(parsed.length, 2);
-  assert.ok(typeof parsed[0].provider === "string");
-  assert.equal(parsed[0].tokensIn, 100);
-  assert.equal(parsed[0].tokensOut, 50);
+  assert.ok(Array.isArray(parsed.items));
+  assert.equal(parsed.items.length, 2);
+  assert.equal(parsed.nextCursor, null);
+  assert.ok(typeof parsed.items[0].provider === "string");
+  assert.equal(parsed.items[0].tokensIn, 100);
+  assert.equal(parsed.items[0].tokensOut, 50);
 });
 
 test("runUsageHistory exibe histórico", async () => {

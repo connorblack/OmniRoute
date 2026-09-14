@@ -819,6 +819,13 @@ export async function getCallLogs(filter: any = {}) {
     conditions.push("cl.timestamp <= @until");
     params.until = filter.until instanceof Date ? filter.until.toISOString() : String(filter.until);
   }
+  if (filter.beforeTimestamp && filter.beforeId) {
+    conditions.push(
+      "(cl.timestamp < @beforeTimestamp OR (cl.timestamp = @beforeTimestamp AND cl.id < @beforeId))"
+    );
+    params.beforeTimestamp = String(filter.beforeTimestamp);
+    params.beforeId = String(filter.beforeId);
+  }
   if (filter.search) {
     conditions.push(`(
       cl.model LIKE @searchQ OR cl.path LIKE @searchQ OR cl.account LIKE @searchQ OR
@@ -839,7 +846,7 @@ export async function getCallLogs(filter: any = {}) {
 
   const limit = Number.isInteger(filter.limit) && filter.limit > 0 ? filter.limit : 200;
   const offset = Number.isInteger(filter.offset) && filter.offset > 0 ? filter.offset : 0;
-  sql += ` ORDER BY cl.timestamp DESC LIMIT @__limit OFFSET @__offset`;
+  sql += ` ORDER BY cl.timestamp DESC, cl.id DESC LIMIT @__limit OFFSET @__offset`;
   params.__limit = limit;
   params.__offset = offset;
 

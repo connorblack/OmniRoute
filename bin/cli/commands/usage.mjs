@@ -88,6 +88,8 @@ export function registerUsage(program) {
     .option("--limit <n>", t("usage.logs.limit"), parseInt, 100)
     .option("--search <q>", t("usage.logs.search"))
     .option("--since <ts>", t("usage.logs.since"))
+    .option("--cursor <cursor>", "Continue from a previous JSON page")
+    .option("--include-active", "Include in-flight and recently completed requests")
     .option("--follow", t("usage.logs.follow"))
     .option("--api-key <k>", t("usage.logs.api_key"))
     .action(runUsageLogs);
@@ -220,8 +222,19 @@ export async function runUsageLogs(opts, cmd) {
   const res = await fetchOrExit(`/api/usage/call-logs?${p}`, globalOpts);
   const data = await res.json();
   const items = toArray(data.logs ?? data.items ?? data);
-  const rows = globalOpts.output === "table" ? toLogRows(items) : items;
-  emit(rows, globalOpts, globalOpts.output === "table" ? logsSchema : null);
+  if (globalOpts.output === "table") {
+    emit(toLogRows(items), globalOpts, logsSchema);
+    return;
+  }
+  if (globalOpts.output === "json") {
+    emit(
+      { items, nextCursor: res.headers.get("x-omniroute-next-cursor") || null },
+      globalOpts,
+      null
+    );
+    return;
+  }
+  emit(items, globalOpts, null);
 }
 
 export async function runUsageUtilization(opts, cmd) {
@@ -288,6 +301,8 @@ function buildLogParams(opts) {
   const p = new URLSearchParams({ limit: String(opts.limit ?? 100) });
   if (opts.search) p.set("search", opts.search);
   if (opts.since) p.set("since", opts.since);
+  if (opts.cursor) p.set("cursor", opts.cursor);
+  if (opts.includeActive) p.set("includeActive", "1");
   if (opts.apiKey) p.set("apiKey", opts.apiKey);
   return p;
 }

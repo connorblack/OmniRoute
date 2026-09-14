@@ -16,6 +16,55 @@ type CallLogListRowsInput = {
   now?: number;
 };
 
+type CallLogCursor = {
+  timestamp: string;
+  id: string;
+};
+
+function compareCallLogRows(a: any, b: any): number {
+  const priority = rowPriority(a) - rowPriority(b);
+  if (priority !== 0) return priority;
+  const timestamp = rowTimestampMs(b) - rowTimestampMs(a);
+  if (timestamp !== 0) return timestamp;
+  return String(b?.id || "").localeCompare(String(a?.id || ""));
+}
+
+export function encodeCallLogCursor(cursor: CallLogCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString("base64url");
+}
+
+export function decodeCallLogCursor(value: string): CallLogCursor {
+  const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as Record<string, unknown>).timestamp !== "string" ||
+    !Number.isFinite(Date.parse((parsed as Record<string, string>).timestamp)) ||
+    typeof (parsed as Record<string, unknown>).id !== "string" ||
+    !(parsed as Record<string, string>).id
+  ) {
+    throw new Error("Invalid call-log cursor");
+  }
+  return {
+    timestamp: (parsed as Record<string, string>).timestamp,
+    id: (parsed as Record<string, string>).id,
+  };
+}
+
+export function finalizeCallLogPage(rows: any[], limit: number) {
+  const boundedLimit = Number.isInteger(limit) && limit > 0 ? limit : 200;
+  const ordered = [...rows].sort(compareCallLogRows);
+  const items = ordered.slice(0, boundedLimit);
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      ordered.length > boundedLimit && last
+        ? encodeCallLogCursor({ timestamp: String(last.timestamp), id: String(last.id) })
+        : null,
+  };
+}
+
 function rowTimestampMs(row: any): number {
   const value = Date.parse(String(row?.timestamp || ""));
   return Number.isFinite(value) ? value : 0;
@@ -144,6 +193,7 @@ export function buildCallLogListRows({
   const persistedIds = new Set(logs.map((log: any) => log.id).filter(Boolean));
 
   for (const detail of pendingDetails) {
+    if (persistedIds.has(detail.id)) continue;
     activeEntries.push({
       id: detail.id,
       timestamp: new Date(detail.startedAt).toISOString(),
@@ -208,14 +258,7 @@ export function buildCallLogListRows({
     });
   }
 
-  return [...activeEntries, ...completedEntries, ...logs].sort((a, b) => {
-    // Active requests always on top
-    const pa = rowPriority(a);
-    const pb = rowPriority(b);
-    if (pa !== pb) return pa - pb;
-    // Within same priority, newest first
-    return rowTimestampMs(b) - rowTimestampMs(a);
-  });
+  return [...activeEntries, ...completedEntries, ...logs].sort(compareCallLogRows);
 }
 
 export async function GET(request: Request) {
@@ -234,10 +277,30 @@ export async function GET(request: Request) {
     if (searchParams.get("combo")) filter.combo = searchParams.get("combo");
     if (searchParams.get("search")) filter.search = searchParams.get("search");
     if (searchParams.get("correlationId")) filter.correlationId = searchParams.get("correlationId");
-    if (searchParams.get("limit")) filter.limit = parseInt(searchParams.get("limit"));
-    if (searchParams.get("offset")) filter.offset = parseInt(searchParams.get("offset"));
-    // Home Recent Requests feed sets excludeTests=1 so connection-test probe rows
-    // are dropped at the SQL layer (before LIMIT), not client-side after slicing.
+    const requestedLimit = Math.min(
+      5000,
+      Math.max(1, Number.parseInt(searchParams.get("limit") || "200", 10) || 200)
+    );
+    const cursorValue = searchParams.get("cursor");
+    const includeActive = searchParams.get("includeActive") === "1";
+    if (cursorValue && includeActive) {
+      return NextResponse.json(
+        { error: "Cursor pagination does not include active requests" },
+        { status: 400 }
+      );
+    }
+    if (cursorValue) {
+      try {
+        const cursor = decodeCallLogCursor(cursorValue);
+        filter.beforeTimestamp = cursor.timestamp;
+        filter.beforeId = cursor.id;
+      } catch {
+        return NextResponse.json({ error: "Invalid call-log cursor" }, { status: 400 });
+      }
+    } else if (searchParams.get("offset")) {
+      filter.offset = Number.parseInt(searchParams.get("offset") || "0", 10);
+    }
+    filter.limit = requestedLimit + 1;
     if (searchParams.get("excludeTests") === "1") filter.excludeTests = true;
 
     const [logs, connections, providerNodes] = await Promise.all([
@@ -262,12 +325,15 @@ export async function GET(request: Request) {
       logs,
       connections,
       providerDisplayNames,
-      pendingDetails: getPendingById().values(),
-      completedDetails: getCompletedDetails().values(),
+      pendingDetails: includeActive ? getPendingById().values() : [],
+      completedDetails: includeActive ? getCompletedDetails().values() : [],
     });
 
-    const filtered = rows.filter((r: any) => rowMatchesFilter(r, filter));
-    return NextResponse.json(filtered);
+    const filtered = rows.filter((row: any) => rowMatchesFilter(row, filter));
+    const page = finalizeCallLogPage(filtered, requestedLimit);
+    return NextResponse.json(page.items, {
+      headers: page.nextCursor ? { "x-omniroute-next-cursor": page.nextCursor } : undefined,
+    });
   } catch (error) {
     console.error("[API ERROR] /api/usage/call-logs failed:", error);
     return NextResponse.json({ error: "Failed to fetch call logs" }, { status: 500 });
