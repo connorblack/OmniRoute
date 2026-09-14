@@ -28,7 +28,7 @@ const auth = await import("../../src/sse/services/auth.ts");
 const AI_STUDIO_HIGH_DEMAND =
   "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.";
 
-function target(connectionId: string, model = "gemini-2.5-pro"): ResolvedComboTarget {
+function target(connectionId: string, model = "gemini-3.8-flash"): ResolvedComboTarget {
   return {
     kind: "model",
     stepId: connectionId,
@@ -128,7 +128,7 @@ test.after(() => {
 test("one Gemini AI Studio 503 locks that model across sibling keys exactly once", async () => {
   const connectionA = await createGeminiConnection("ai-studio-a");
   const connectionB = await createGeminiConnection("ai-studio-b");
-  const modelM = "gemini-2.5-pro";
+  const modelM = "gemini-3.8-flash";
   const modelN = "gemini-2.5-flash";
   const firstTarget = target(connectionA.id, modelM);
   const loopState = state([firstTarget, target(connectionB.id, modelM)]);
@@ -319,7 +319,7 @@ for (const failure of [
 test("Gemini recovery clears provider scope without clearing a live connection scope", async () => {
   const connectionA = await createGeminiConnection("ai-studio-mixed-scope-a");
   const connectionB = await createGeminiConnection("ai-studio-mixed-scope-b");
-  const model = "gemini-2.5-pro";
+  const model = "gemini-3.8-flash";
 
   await auth.markAccountUnavailable(connectionA.id, 429, "rate limited", "gemini", model);
   await auth.markAccountUnavailable(
@@ -362,9 +362,9 @@ test("Gemini AI Studio 429 remains scoped to one connection and model", async ()
     429,
     "quota exceeded",
     "gemini",
-    "gemini-2.5-pro"
+    "gemini-3.8-flash"
   );
 
-  assert.equal(fallback.isModelLocked("gemini", connectionA.id, "gemini-2.5-pro"), true);
-  assert.equal(fallback.isModelLocked("gemini", connectionB.id, "gemini-2.5-pro"), false);
+  assert.equal(fallback.isModelLocked("gemini", connectionA.id, "gemini-3.8-flash"), true);
+  assert.equal(fallback.isModelLocked("gemini", connectionB.id, "gemini-3.8-flash"), false);
 });
