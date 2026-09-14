@@ -475,7 +475,7 @@ async function buildPinnedMemberPlan(args: {
     settings,
     hiddenModelsByProvider,
   });
-  const candidates = await expandTargetsForAllStrategies({
+  let candidates = await expandTargetsForAllStrategies({
     strategy: policy.strategy,
     targets: [policy.target],
     comboName: policy.combo.name,
@@ -484,6 +484,20 @@ async function buildPinnedMemberPlan(args: {
     log,
     apiKeyAllowedConnectionIds: apiKeyAllowedConnections ?? null,
   });
+  if (policy.strategy === "random") {
+    candidates = fisherYatesShuffle(candidates);
+  } else if (policy.strategy === "strict-random" && candidates.length > 1) {
+    const selectedKey = await getNextFromDeck(
+      `combo:${policy.combo.name}:pinned:${policy.target.modelStr}`,
+      candidates.map((candidate) => candidate.executionKey)
+    );
+    const selected =
+      candidates.find((candidate) => candidate.executionKey === selectedKey) ?? candidates[0];
+    candidates = [
+      selected,
+      ...candidates.filter((candidate) => candidate.executionKey !== selected.executionKey),
+    ];
+  }
   const hedging =
     policy.config.zeroLatencyOptimizationsEnabled === true &&
     policy.config.hedging === true &&
