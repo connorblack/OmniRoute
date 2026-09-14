@@ -18,9 +18,8 @@ const quotaPreflight = await import("../../open-sse/services/quotaPreflight.ts")
 const family = await import("../../open-sse/services/antigravityQuotaFamily.ts");
 const fallback = await import("../../open-sse/services/accountFallback.ts");
 const { markConnectionQuotaExhausted } = await import("../../open-sse/executors/antigravity.ts");
-const { quotaRemainingPercentFromQuota } = await import(
-  "../../open-sse/services/combo/comboPredicates.ts"
-);
+const { quotaRemainingPercentFromQuota } =
+  await import("../../open-sse/services/combo/comboPredicates.ts");
 
 const CLAUDE_RESET = "2026-09-06T17:38:10.000Z";
 const GEMINI_RESET = "2026-09-09T09:59:00.000Z";
@@ -40,7 +39,10 @@ test.after(() => {
 });
 
 test("selectAntigravityQuotaWindowNames keeps Claude weekly off a Gemini request", () => {
-  const names = family.selectAntigravityQuotaWindowNames(Object.keys(mixedWindows()), "gemini-3.1-flash-lite");
+  const names = family.selectAntigravityQuotaWindowNames(
+    Object.keys(mixedWindows()),
+    "gemini-3.1-flash-lite"
+  );
   assert.deepEqual(names.sort(), ["gemini-3.1-flash-lite", "gemini_weekly"].sort());
 });
 
@@ -118,7 +120,7 @@ test("markConnectionQuotaExhausted with a Gemini model locks the family, not the
   });
   const connId = (conn as { id: string }).id;
 
-  markConnectionQuotaExhausted(connId, 24 * 60 * 60 * 1000, "gemini-3.1-flash-lite");
+  await markConnectionQuotaExhausted(connId, 24 * 60 * 60 * 1000, "gemini-3.1-flash-lite");
 
   assert.equal(
     providersDb.isConnectionRateLimited(connId),
@@ -128,6 +130,7 @@ test("markConnectionQuotaExhausted with a Gemini model locks the family, not the
   assert.equal(fallback.isModelLocked("agy", connId, "gemini-3.1-flash-lite"), true);
   assert.equal(fallback.isModelLocked("agy", connId, "gemini-3.7-flash-high"), true);
   assert.equal(fallback.isModelLocked("agy", connId, "claude-opus-4-6-thinking"), false);
+  assert.equal(fallback.isModelLocked("antigravity", connId, "gemini-3.1-flash-lite"), false);
 });
 
 test("Antigravity RPM 429 stays exact-model and does not persist a family cooldown", async () => {
@@ -208,9 +211,8 @@ test("persisted family cooldown rehydrates after a process-local lockout wipe", 
   const connId = (conn as { id: string }).id;
   const until = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-  const { persistAntigravityFamilyCooldown, rehydrateAntigravityFamilyLocks } = await import(
-    "../../open-sse/services/antigravityFamilyCooldown.ts"
-  );
+  const { persistAntigravityFamilyCooldown, rehydrateAntigravityFamilyLocks } =
+    await import("../../open-sse/services/antigravityFamilyCooldown.ts");
   await persistAntigravityFamilyCooldown({
     connectionId: connId,
     model: "claude-sonnet-4",
@@ -231,11 +233,10 @@ test("persisted family cooldown rehydrates after a process-local lockout wipe", 
   assert.equal(providersDb.isConnectionRateLimited(connId), false);
 });
 
-test("preflight family lock covers both agy and antigravity spellings", async () => {
+test("preflight family lock stays on the owning antigravity provider", async () => {
   fallback.clearAllModelLockouts();
-  const { persistAntigravityPreflightFamilyLock } = await import(
-    "../../open-sse/services/antigravityFamilyCooldown.ts"
-  );
+  const { persistAntigravityPreflightFamilyLock } =
+    await import("../../open-sse/services/antigravityFamilyCooldown.ts");
   const conn = await providersDb.createProviderConnection({
     provider: "antigravity",
     authType: "oauth",
@@ -252,7 +253,7 @@ test("preflight family lock covers both agy and antigravity spellings", async ()
   });
 
   assert.equal(fallback.isModelLocked("antigravity", connId, "claude-opus-4"), true);
-  assert.equal(fallback.isModelLocked("agy", connId, "claude-opus-4"), true);
+  assert.equal(fallback.isModelLocked("agy", connId, "claude-opus-4"), false);
   assert.equal(fallback.isModelLocked("antigravity", connId, "gemini-3.1-flash-lite"), false);
   assert.equal(fallback.isModelLocked("agy", connId, "gemini-3.1-flash-lite"), false);
 });
