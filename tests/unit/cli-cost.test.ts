@@ -59,7 +59,7 @@ function makeResp(data: unknown, status = 200) {
     exitCode: status >= 200 && status < 300 ? 0 : 1,
     json: () => Promise.resolve(data),
     text: () => Promise.resolve(JSON.stringify(data)),
-    headers: new Headers(),
+    headers: new Headers({ "content-type": "application/json" }),
   };
   obj.json = obj.json.bind(obj);
   obj.text = obj.text.bind(obj);

@@ -129,6 +129,13 @@ export function recordTelemetry(telemetry) {
   }
 }
 
+export function getTelemetryEvents(windowMs = 300000): TelemetrySummary[] {
+  const cutoff = Date.now() - windowMs;
+  return history
+    .filter((entry) => (entry.recordedAt || 0) >= cutoff)
+    .map((entry) => ({ ...entry, phases: entry.phases.map((phase) => ({ ...phase })) }));
+}
+
 /**
  * Calculate percentile from sorted array.
  * @param {number[]} sorted

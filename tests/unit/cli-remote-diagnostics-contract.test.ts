@@ -58,7 +58,8 @@ test("friendly usage commands forward the selected remote target", async () => {
 test("friendly usage commands reject non-success HTTP responses", async () => {
   const originalFetch = globalThis.fetch;
   const originalExit = process.exit;
-  globalThis.fetch = (async () => response({ error: { message: "remote failed" } }, 503)) as typeof fetch;
+  globalThis.fetch = (async () =>
+    response({ error: { message: "remote failed" } }, 503)) as typeof fetch;
   process.exit = ((code?: number) => {
     throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code });
   }) as typeof process.exit;

@@ -42,7 +42,10 @@ test.after(() => {
 
 test("call-log cursor stays stable when a newer row arrives", async () => {
   const first = await callLogs.getCallLogs({ limit: 2 });
-  assert.deepEqual(first.map((row: { id: string }) => row.id), ["a", "c"]);
+  assert.deepEqual(
+    first.map((row: { id: string }) => row.id),
+    ["a", "c"]
+  );
 
   insert("z", "2026-09-14T10:06:00.000Z");
   const second = await callLogs.getCallLogs({
@@ -51,7 +54,10 @@ test("call-log cursor stays stable when a newer row arrives", async () => {
     beforeId: first[1].id,
   });
 
-  assert.deepEqual(second.map((row: { id: string }) => row.id), ["b", "d"]);
+  assert.deepEqual(
+    second.map((row: { id: string }) => row.id),
+    ["b", "d"]
+  );
 });
 
 test("merged call-log rows prefer persisted state over a stale pending row", () => {
@@ -82,7 +88,10 @@ test("final call-log page applies one limit after merging and returns a cursor",
     { id: "b", timestamp: "2026-09-14T10:04:00.000Z" },
   ];
   const page = route.finalizeCallLogPage(rows, 2);
-  assert.deepEqual(page.items.map((row: { id: string }) => row.id), ["a", "c"]);
+  assert.deepEqual(
+    page.items.map((row: { id: string }) => row.id),
+    ["a", "c"]
+  );
   assert.equal(typeof page.nextCursor, "string");
   assert.deepEqual(route.decodeCallLogCursor(page.nextCursor), {
     timestamp: "2026-09-14T10:04:00.000Z",

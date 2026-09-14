@@ -288,6 +288,45 @@ export function getProviderCostRows(
     .all(params) as ProviderCostRow[];
 }
 
+export interface ComboCostRow {
+  combo: string;
+  provider: string;
+  model: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  reasoningTokens: number;
+}
+
+export function getComboCostRows(whereClause: string, params: AnalyticsParams): ComboCostRow[] {
+  const db = getDbInstance();
+  const filtered = whereClause.replace(/^\s*WHERE\s+/i, "");
+  const where = filtered
+    ? `WHERE combo_name IS NOT NULL AND TRIM(combo_name) != '' AND (${filtered})`
+    : "WHERE combo_name IS NOT NULL AND TRIM(combo_name) != ''";
+  return db
+    .prepare(
+      `
+      SELECT
+        combo_name as combo,
+        LOWER(provider) as provider,
+        LOWER(model) as model,
+        COUNT(*) as requests,
+        COALESCE(SUM(tokens_in), 0) as promptTokens,
+        COALESCE(SUM(tokens_out), 0) as completionTokens,
+        COALESCE(SUM(tokens_cache_read), 0) as cacheReadTokens,
+        COALESCE(SUM(tokens_cache_creation), 0) as cacheCreationTokens,
+        COALESCE(SUM(tokens_reasoning), 0) as reasoningTokens
+      FROM call_logs
+      ${where}
+      GROUP BY combo_name, LOWER(provider), LOWER(model)
+    `
+    )
+    .all(params) as ComboCostRow[];
+}
+
 // ---------------------------------------------------------------------------
 
 export interface ProviderUsageRow {

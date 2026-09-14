@@ -13,6 +13,7 @@ import {
   getHeatmapRows,
   getModelUsageRows,
   getProviderCostRows,
+  getComboCostRows,
   getProviderUsageRows,
   getAccountCostRows,
   getAccountUsageRows,
@@ -237,6 +238,20 @@ function resolveModelPricing(
   return pricing as Record<string, unknown> | null;
 }
 
+type PricingState = "free" | "priced" | "unpriced" | "mixed";
+
+function classifyPricing(pricing: Record<string, unknown> | null): Exclude<PricingState, "mixed"> {
+  if (!pricing) return "unpriced";
+  const dimensions = ["input", "output", "cached", "reasoning", "cache_creation"]
+    .map((key) => pricing[key])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return dimensions.length > 0 && dimensions.every((value) => value === 0) ? "free" : "priced";
+}
+
+function mergePricingStates(states: Set<Exclude<PricingState, "mixed">>): PricingState {
+  return states.size === 1 ? [...states][0] : "mixed";
+}
+
 function computeUsageRowCost(
   row: Record<string, unknown>,
   pricingByProvider: PricingByProvider,
@@ -356,6 +371,7 @@ export async function GET(request: Request) {
     const range = searchParams.get("range") || "30d";
     const startDate = searchParams.get("startDate") || undefined;
     const endDate = searchParams.get("endDate") || undefined;
+    const provider = searchParams.get("provider") || undefined;
     const apiKeyIdsParam = searchParams.get("apiKeyIds") || "";
     const apiKeyIds = apiKeyIdsParam ? apiKeyIdsParam.split(",").filter(Boolean) : [];
     // Flat-rate subscriptions are $0 in billed-cost analytics by default. The
@@ -394,6 +410,10 @@ export async function GET(request: Request) {
       conditions.push("timestamp <= @until");
       params.until = untilIso;
     }
+    if (provider) {
+      conditions.push("provider = @provider");
+      params.provider = provider;
+    }
 
     let apiKeyWhere = "";
     if (apiKeyIds.length > 0) {
@@ -419,6 +439,7 @@ export async function GET(request: Request) {
       sinceIso: sinceIso ?? null,
       untilIso: untilIso ?? null,
       rawCutoffDate,
+      provider: provider ?? null,
       apiKeyWhere,
       apiKeyParams: apiKeyParamEntries,
     });
@@ -457,8 +478,10 @@ export async function GET(request: Request) {
 
     // Heatmap needs its own whereClause if api keys are filtered
     const heatmapConditions = ["timestamp >= @heatmapStart"];
+    if (provider) heatmapConditions.push("provider = @provider");
     if (apiKeyWhere) heatmapConditions.push(apiKeyWhere);
     const heatmapParams: Record<string, string> = { heatmapStart: heatmapStart.toISOString() };
+    if (provider) heatmapParams.provider = provider;
     if (apiKeyIds.length > 0) {
       apiKeyIds.forEach((key, i) => {
         heatmapParams[`apiKey${i}`] = key;
@@ -470,6 +493,7 @@ export async function GET(request: Request) {
     const modelRows = getModelUsageRows(unifiedSource, unifiedParams) as UsageRows;
 
     const providerCostRows = getProviderCostRows(unifiedSource, unifiedParams) as UsageRows;
+    const comboCostRows = getComboCostRows(whereClause, params) as UsageRows;
 
     const providerRows = getProviderUsageRows(unifiedSource, unifiedParams) as UsageRows;
 
@@ -698,6 +722,63 @@ export async function GET(request: Request) {
 
     const byProvider = await buildByProviderRows(providerRows, providerCostByProvider);
 
+    const comboMap = new Map<
+      string,
+      {
+        combo: string;
+        requests: number;
+        promptTokens: number;
+        completionTokens: number;
+        cost: number;
+        pricingStates: Set<Exclude<PricingState, "mixed">>;
+      }
+    >();
+    for (const row of comboCostRows) {
+      const combo = toStringValue(row.combo);
+      const provider = toStringValue(row.provider);
+      const model = toStringValue(row.model);
+      if (!combo || !provider || !model) continue;
+      const pricing = resolveModelPricing(
+        pricingByProvider,
+        PROVIDER_ID_TO_ALIAS,
+        provider,
+        model,
+        normalizeModelName
+      );
+      const current = comboMap.get(combo) || {
+        combo,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cost: 0,
+        pricingStates: new Set<Exclude<PricingState, "mixed">>(),
+      };
+      current.requests += Number(row.requests || 0);
+      current.promptTokens += Number(row.promptTokens || 0);
+      current.completionTokens += Number(row.completionTokens || 0);
+      current.cost += computeUsageRowCost(
+        row,
+        pricingByProvider,
+        PROVIDER_ID_TO_ALIAS,
+        normalizeModelName,
+        computeCostFromPricing,
+        !includeFlatRateEstimates
+      );
+      current.pricingStates.add(classifyPricing(pricing));
+      comboMap.set(combo, current);
+    }
+    const byCombo = [...comboMap.values()]
+      .map((row) => ({
+        combo: row.combo,
+        requests: row.requests,
+        promptTokens: row.promptTokens,
+        completionTokens: row.completionTokens,
+        totalTokens: row.promptTokens + row.completionTokens,
+        cost: roundCost(row.cost),
+        pricingState: mergePricingStates(row.pricingStates),
+      }))
+      .sort((left, right) => right.requests - left.requests);
+
     const accountCostByAccount = new Map<string, number>();
     for (const row of accountCostRows) {
       const accountKey = toStringValue(row.accountKey, "unknown");
@@ -896,6 +977,7 @@ export async function GET(request: Request) {
       activityMap,
       byModel,
       byProvider,
+      byCombo,
       byApiKey,
       byAccount,
       byServiceTier,
@@ -930,6 +1012,7 @@ export async function GET(request: Request) {
           sinceIso: presetSinceIso ?? null,
           untilIso: null,
           rawCutoffDate,
+          provider: provider ?? null,
           apiKeyWhere,
           apiKeyParams: apiKeyParamEntries,
         });

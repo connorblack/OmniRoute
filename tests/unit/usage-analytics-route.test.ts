@@ -459,7 +459,16 @@ test("GET /api/usage/analytics reports combo cost with free and unpriced states"
     `INSERT INTO call_logs
       (id, provider, model, combo_name, tokens_in, tokens_out, status, timestamp)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run("unknown-call", "unknown-provider", "unknown-model", "unknown-combo", 100, 50, 200, timestamp);
+  ).run(
+    "unknown-call",
+    "unknown-provider",
+    "unknown-model",
+    "unknown-combo",
+    100,
+    50,
+    200,
+    timestamp
+  );
 
   const response = await analyticsRoute.GET(
     makeRequest("http://localhost/api/usage/analytics?range=1d")

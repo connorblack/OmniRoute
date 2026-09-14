@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { t } from "../i18n.mjs";
 
@@ -39,19 +39,20 @@ export function registerTelemetry(program) {
     .action(async (opts, cmd) => {
       const params = new URLSearchParams({ period: opts.period });
       if (opts.compareTo) params.set("compareTo", opts.compareTo);
-      const res = await apiFetch(`/api/telemetry/summary?${params}`);
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const data = await res.json();
+      const globalOpts = cmd.optsWithGlobals();
+      const timeout = Number.parseInt(globalOpts.timeout, 10);
+      const res = await apiFetch(`/api/telemetry/summary?${params}`, {
+        ...globalOpts,
+        timeout: Number.isFinite(timeout) ? timeout : undefined,
+      });
+      const data = await readApiResponse(res);
       const rows = Object.entries(data.metrics ?? data).map(([metric, info]) => ({
         metric,
         value: info?.value ?? info,
         delta: info?.delta,
         trend: info?.trend,
       }));
-      emit(rows, cmd.optsWithGlobals(), telemetrySchema);
+      emit(rows, globalOpts, telemetrySchema);
     });
 
   tel
@@ -60,15 +61,20 @@ export function registerTelemetry(program) {
     .option("--out <path>", t("telemetry.export.out"), "telemetry.jsonl")
     .option("--period <p>", t("telemetry.export.period"), "7d")
     .action(async (opts, cmd) => {
-      const res = await apiFetch(`/api/telemetry/summary?format=jsonl&period=${opts.period}`);
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const data = await res.json();
-      const items = data.events ?? data.items ?? [];
-      const lines = items.map((e) => JSON.stringify(e)).join("\n");
+      const globalOpts = cmd.optsWithGlobals();
+      const timeout = Number.parseInt(globalOpts.timeout, 10);
+      const res = await apiFetch(`/api/telemetry/summary?format=jsonl&period=${opts.period}`, {
+        ...globalOpts,
+        timeout: Number.isFinite(timeout) ? timeout : undefined,
+      });
+      await res.assertOk();
+      const lines = await res.text();
       writeFileSync(opts.out, lines);
-      process.stdout.write(`Exported ${items.length} events to ${opts.out}\n`);
+      const count = lines.split("\n").filter(Boolean).length;
+      if (globalOpts.output === "table") {
+        process.stdout.write(`Exported ${count} events to ${opts.out}\n`);
+      } else {
+        emit({ path: opts.out, events: count }, globalOpts);
+      }
     });
 }

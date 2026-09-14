@@ -366,7 +366,10 @@ export function trackPendingRequest(
       pendingRequests.details[connectionId][modelKey].push(newDetail);
       pendingById.set(newDetail.id, newDetail);
       if (normalizedMetadata.correlationId) {
-        pendingIdByCorrelation.set(normalizedMetadata.correlationId, { id: newDetail.id, touchedAt: now });
+        pendingIdByCorrelation.set(normalizedMetadata.correlationId, {
+          id: newDetail.id,
+          touchedAt: now,
+        });
       }
       return newDetail.id;
     } else if (!started && nextCount >= 0) {
@@ -805,6 +808,10 @@ export interface UsageHistoryFilter {
   model?: string;
   startDate?: string | number | Date;
   endDate?: string | number | Date;
+  beforeTimestamp?: string;
+  beforeId?: number;
+  limit?: number;
+  sortOrder?: "asc" | "desc";
 }
 
 /**
@@ -832,16 +839,29 @@ export async function getUsageHistory(filter: UsageHistoryFilter = {}) {
     conditions.push("timestamp <= @endDate");
     params.endDate = new Date(filter.endDate).toISOString();
   }
+  if (filter.beforeTimestamp && Number.isInteger(filter.beforeId)) {
+    conditions.push(
+      "(timestamp < @beforeTimestamp OR (timestamp = @beforeTimestamp AND id < @beforeId))"
+    );
+    params.beforeTimestamp = filter.beforeTimestamp;
+    params.beforeId = filter.beforeId;
+  }
 
   if (conditions.length > 0) {
     sql += " WHERE " + conditions.join(" AND ");
   }
-  sql += " ORDER BY timestamp ASC";
+  const direction = filter.sortOrder === "desc" ? "DESC" : "ASC";
+  sql += ` ORDER BY timestamp ${direction}, id ${direction}`;
+  if (Number.isInteger(filter.limit) && Number(filter.limit) > 0) {
+    sql += " LIMIT @limit";
+    params.limit = Number(filter.limit);
+  }
 
   const rows = db.prepare(sql).all(params);
   return rows.map((row) => {
     const r = asRecord(row);
     return {
+      id: toNumber(r.id),
       provider: toStringOrNull(r.provider),
       model: toStringOrNull(r.model),
       connectionId: toStringOrNull(r.connection_id),
