@@ -20,13 +20,9 @@ export function registerLogs(program) {
     .option("--export <path>", t("logs.export"))
     .action(async (opts, cmd) => {
       const globalOpts = cmd.optsWithGlobals();
-      // `--context` and `--output` are global options, so forward them explicitly:
-      // runLogsCommand resolves the base URL via getBaseUrl({ context }), and without
-      // this a user's `--context` would be silently dropped.
       const exitCode = await runLogsCommand({
+        ...globalOpts,
         ...opts,
-        context: globalOpts.context,
-        output: globalOpts.output,
       });
       if (exitCode !== 0) process.exit(exitCode);
     });
@@ -107,6 +103,15 @@ export async function runLogsCommand(opts = {}) {
     follow,
     timeout,
     headers,
+    query: {
+      limit: opts.lines,
+      requestId: opts.requestId,
+      apiKey: opts.apiKey,
+      combo: opts.combo,
+      status: opts.status,
+      durationMin: opts.durationMin,
+      durationMax: opts.durationMax,
+    },
   });
 
   const reader = stream.getReader();
@@ -142,7 +147,7 @@ export async function runLogsCommand(opts = {}) {
     }
 
     if (isJson) {
-      console.log(JSON.stringify(parsed));
+      process.stdout.write(`${JSON.stringify(parsed)}\n`);
       return;
     }
 
@@ -154,6 +159,7 @@ export async function runLogsCommand(opts = {}) {
     console.log(`${prefix}\x1b[0m ${ts} ${msg}`);
   };
 
+  let exitCode = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -166,18 +172,19 @@ export async function runLogsCommand(opts = {}) {
     if (buffer) processLine(buffer);
     if (exportPath) console.log(t("logs.exported", { path: exportPath }));
   } catch (err) {
-    if (err.name === "AbortError") {
-      console.log(t("logs.stopped"));
+    if (err.name === "AbortError" && follow) {
+      if (!isJson) process.stderr.write(`${t("logs.stopped")}\n`);
     } else {
-      console.error(
-        t("logs.streamError", {
+      exitCode = 1;
+      process.stderr.write(
+        `${t("logs.streamError", {
           message: (err instanceof Error ? err.message : String(err)).slice(0, 100),
-        })
+        })}\n`
       );
     }
   } finally {
     stop();
   }
 
-  return 0;
+  return exitCode;
 }

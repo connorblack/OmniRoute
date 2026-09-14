@@ -638,13 +638,20 @@ function resolveSilentCloseOutcome(input: {
 export function createDisconnectAwareStream(
   transformStream,
   streamController,
-  options: { highWaterMark?: number } = {}
+  options: {
+    highWaterMark?: number;
+    onFirstUsefulContent?: () => void;
+    onFirstVisibleContent?: () => void;
+  } = {}
 ) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   const terminalDecoder = new TextDecoder();
   const contentDecoder = new TextDecoder();
-  const contentWatcher = createStreamContentWatcher();
+  const contentWatcher = createStreamContentWatcher({
+    onFirstUsefulContent: options.onFirstUsefulContent,
+    onFirstVisibleContent: options.onFirstVisibleContent,
+  });
   const completedToolHandoffWatcher = createCompletedResponsesToolHandoffWatcher();
   const toolHandoffDecoder = new TextDecoder();
   let terminalTail = "";
@@ -857,7 +864,14 @@ export function pipeWithDisconnect(
   providerResponse: Response,
   transformStream: TransformStream<Uint8Array, Uint8Array>,
   streamController: StreamController,
-  opts: { stallTimeoutMs?: number; contentStallTimeoutMs?: number; highWaterMark?: number } = {}
+  opts: {
+    stallTimeoutMs?: number;
+    contentStallTimeoutMs?: number;
+    highWaterMark?: number;
+    onFirstUpstreamByte?: () => void;
+    onFirstUsefulContent?: () => void;
+    onFirstVisibleContent?: () => void;
+  } = {}
 ) {
   const stallTimeoutMs = opts.stallTimeoutMs ?? DEFAULT_STREAM_STALL_TIMEOUT_MS;
   // Disabled unless a caller opts in with an explicit budget (chatCore wires
@@ -869,12 +883,20 @@ export function pipeWithDisconnect(
   const contentStallTimeoutMs = opts.contentStallTimeoutMs ?? 0;
 
   // Watchdogs disabled — preserve legacy behavior verbatim.
-  if ((!stallTimeoutMs || stallTimeoutMs <= 0) && contentStallTimeoutMs <= 0) {
+  if (
+    (!stallTimeoutMs || stallTimeoutMs <= 0) &&
+    contentStallTimeoutMs <= 0 &&
+    !opts.onFirstUpstreamByte
+  ) {
     const transformedBody = providerResponse.body.pipeThrough(transformStream);
     return createDisconnectAwareStream(
       { readable: transformedBody, writable: createNoopAbortWritable() },
       streamController,
-      { highWaterMark: opts.highWaterMark }
+      {
+        highWaterMark: opts.highWaterMark,
+        onFirstUsefulContent: opts.onFirstUsefulContent,
+        onFirstVisibleContent: opts.onFirstVisibleContent,
+      }
     );
   }
 
@@ -1021,6 +1043,7 @@ export function pipeWithDisconnect(
   // chunk carries real output. Sits between the provider body and the SSE
   // transform so reasoning models that buffer many raw bytes into a single
   // emitted event do not look stalled to either watchdog.
+  let firstUpstreamByteSeen = false;
   const upstreamTap = new TransformStream<Uint8Array, Uint8Array>({
     start(controller) {
       upstreamTapController = controller;
@@ -1028,6 +1051,12 @@ export function pipeWithDisconnect(
       armContentStall();
     },
     transform(chunk, controller) {
+      if (!firstUpstreamByteSeen) {
+        firstUpstreamByteSeen = true;
+        try {
+          opts.onFirstUpstreamByte?.();
+        } catch {}
+      }
       armStall();
       if (contentStallTimeoutMs > 0 && !upstreamContentWatcher.sawContent()) {
         upstreamContentWatcher.note(upstreamContentDecoder.decode(chunk, { stream: true }));
@@ -1047,6 +1076,10 @@ export function pipeWithDisconnect(
   return createDisconnectAwareStream(
     { readable: transformedBody, writable: createNoopAbortWritable() },
     wrappedController,
-    { highWaterMark: opts.highWaterMark }
+    {
+      highWaterMark: opts.highWaterMark,
+      onFirstUsefulContent: opts.onFirstUsefulContent,
+      onFirstVisibleContent: opts.onFirstVisibleContent,
+    }
   );
 }

@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createStreamContentWatcher,
   ensureStreamReadiness,
   hasStreamReadinessSignal,
   hasUsefulStreamContent,
+  hasVisibleStreamContent,
 } from "../../open-sse/utils/streamReadiness.ts";
 import { checkFallbackError } from "../../open-sse/services/accountFallback.ts";
 import { resolveStreamReadinessClassificationError } from "../../src/sse/handlers/chatPredicates.ts";
@@ -244,6 +246,46 @@ test("hasUsefulStreamContent detects text, reasoning, and tool deltas", () => {
   );
 });
 
+test("visible stream content excludes reasoning and tool-only deltas", () => {
+  const reasoning = `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "thinking" } }] })}\n\n`;
+  const tool = `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ function: { name: "read" } }] } }] })}\n\n`;
+  const answer = `data: ${JSON.stringify({ choices: [{ delta: { content: "answer" } }] })}\n\n`;
+  const responsesAnswer = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: "response.output_text.delta", delta: "answer" })}\n\n`;
+  const claudeAnswer = `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "answer" } })}\n\n`;
+  const geminiThought = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ thought: true, text: "thinking" }] } }] })}\n\n`;
+  const geminiAnswer = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "answer" }] } }] })}\n\n`;
+
+  assert.equal(hasVisibleStreamContent(reasoning), false);
+  assert.equal(hasVisibleStreamContent(tool), false);
+  assert.equal(hasVisibleStreamContent(answer), true);
+  assert.equal(hasVisibleStreamContent(responsesAnswer), true);
+  assert.equal(hasVisibleStreamContent(claudeAnswer), true);
+  assert.equal(hasVisibleStreamContent(geminiThought), false);
+  assert.equal(hasVisibleStreamContent(geminiAnswer), true);
+});
+
+test("stream watcher fires useful output before later visible content exactly once", () => {
+  let useful = 0;
+  let visible = 0;
+  const watcher = createStreamContentWatcher({
+    onFirstUsefulContent: () => {
+      useful += 1;
+    },
+    onFirstVisibleContent: () => {
+      visible += 1;
+    },
+  });
+  watcher.note(`data: ${JSON.stringify({ choices: [{ delta: { role: "assistant" } }] })}\n\n`);
+  assert.deepEqual({ useful, visible }, { useful: 0, visible: 0 });
+  watcher.note(
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "thinking" } }] })}\n\n`
+  );
+  assert.deepEqual({ useful, visible }, { useful: 1, visible: 0 });
+  watcher.note(`data: ${JSON.stringify({ choices: [{ delta: { content: "answer" } }] })}\n\n`);
+  watcher.note(`data: ${JSON.stringify({ choices: [{ delta: { content: " more" } }] })}\n\n`);
+  assert.deepEqual({ useful, visible }, { useful: 1, visible: 1 });
+});
+
 test("hasStreamReadinessSignal accepts any non-ping structured SSE event", () => {
   assert.equal(hasStreamReadinessSignal(": keepalive\n\n"), false);
   assert.equal(hasStreamReadinessSignal("event: ping\ndata: {}\n\n"), false);
@@ -423,6 +465,27 @@ test("hasStreamReadinessSignal accepts chat completion structural chunks without
     ),
     true
   );
+});
+
+test("ensureStreamReadiness reports the first upstream byte exactly once", async () => {
+  let firstBytes = 0;
+  const response = new Response(
+    streamFromChunks([
+      `data: ${JSON.stringify({ choices: [{ delta: { role: "assistant" } }] })}\n\n`,
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "answer" } }] })}\n\n`,
+    ]),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } }
+  );
+
+  const result = await ensureStreamReadiness(response, {
+    timeoutMs: 100,
+    onFirstUpstreamByte: () => {
+      firstBytes += 1;
+    },
+  });
+  assert.equal(result.ok, true);
+  await result.response.text();
+  assert.equal(firstBytes, 1);
 });
 
 test("ensureStreamReadiness preserves buffered chunks when stream starts", async () => {

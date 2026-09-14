@@ -101,6 +101,79 @@ function getPayloadType(payload: unknown, eventType = ""): string {
   return typeof type === "string" ? type : eventType;
 }
 
+function hasVisibleContentValue(value: unknown): boolean {
+  if (hasNonEmptyString(value)) return true;
+  if (Array.isArray(value)) return value.some(hasVisibleContentValue);
+  if (!isRecord(value)) return false;
+  if (value.thought === true) return false;
+  const type = typeof value.type === "string" ? value.type.toLowerCase() : "";
+  if (type.includes("reasoning") || type.includes("thinking")) return false;
+  if (hasNonEmptyString(value.text)) return true;
+  return hasVisibleContentValue(value.content);
+}
+
+function hasVisibleJsonPayload(payload: unknown, eventType = ""): boolean {
+  if (!isRecord(payload)) return false;
+  const type = getPayloadType(payload, eventType).toLowerCase();
+  if (type.includes("reasoning") || type.includes("thinking")) return false;
+  if (type === "response.output_text.delta" && hasNonEmptyString(payload.delta)) return true;
+
+  if (Array.isArray(payload.choices)) {
+    for (const value of payload.choices) {
+      if (!isRecord(value)) continue;
+      const delta = isRecord(value.delta) ? value.delta : null;
+      const message = isRecord(value.message) ? value.message : null;
+      if (delta && hasVisibleContentValue(delta.content)) return true;
+      if (message && hasVisibleContentValue(message.content)) return true;
+    }
+  }
+
+  const delta = isRecord(payload.delta) ? payload.delta : null;
+  if (delta && hasNonEmptyString(delta.text)) return true;
+  const contentBlock = isRecord(payload.content_block) ? payload.content_block : null;
+  if (contentBlock && hasVisibleContentValue(contentBlock)) return true;
+
+  if (Array.isArray(payload.candidates)) {
+    for (const candidate of payload.candidates) {
+      if (!isRecord(candidate)) continue;
+      const content = isRecord(candidate.content) ? candidate.content : null;
+      if (content && hasVisibleContentValue(content.parts)) return true;
+    }
+  }
+
+  if (hasVisibleContentValue(payload.content)) return true;
+  if (hasNonEmptyString(payload.text) && payload.thought !== true) return true;
+  if (
+    Array.isArray(payload.output) &&
+    payload.output.some((entry) => hasVisibleJsonPayload(entry, type))
+  ) {
+    return true;
+  }
+  const response = isRecord(payload.response) ? payload.response : null;
+  return response ? hasVisibleJsonPayload(response, type) : false;
+}
+
+export function hasVisibleStreamContent(text: string): boolean {
+  let eventType = "";
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(":")) continue;
+    if (trimmed.startsWith("event:")) {
+      eventType = trimmed.slice(6).trim();
+      continue;
+    }
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      if (hasVisibleJsonPayload(JSON.parse(data), eventType)) return true;
+    } catch {
+      if (!/reasoning|thinking/i.test(eventType) && data.length > 0) return true;
+    }
+  }
+  return false;
+}
+
 // Keys that indicate a frame carries (or is starting to carry) actual model
 // output — as opposed to a bare `{error:{...}}` frame with no output signal
 // at all. A stream that only ever emits error-only frames (e.g. a CLI
@@ -229,26 +302,18 @@ export function frameHasStructuredStreamError(frame: string): boolean {
 }
 
 export type StreamContentWatcher = {
-  /** Feed a decoded slice of the client-facing stream. Safe to call with partial frames. */
   note: (text: string) => void;
-  /** Flush any buffered trailing frame; call once the stream is done. */
   finish: () => void;
-  /** True once any frame carried real model output (text, reasoning, or a tool call). */
   sawContent: () => boolean;
-  /** True once a terminal state was seen where emitting no content is valid. */
+  sawVisibleContent: () => boolean;
   sawLegitEmptyTerminal: () => boolean;
-  /**
-   * True once the stream looked like SSE at all. Not every body reaching the
-   * client wrapper is event-stream — a plain JSON completion is forwarded
-   * through the same path — and a non-SSE body has no `data:` frames to judge,
-   * so callers must not read emptiness into it.
-   */
   sawSseFrame: () => boolean;
-  /**
-   * True once a substantive SSE error frame was seen. Separate from sawContent
-   * so #8649 can stand down without treating errors as model output.
-   */
   sawError: () => boolean;
+};
+
+export type StreamContentWatcherOptions = {
+  onFirstUsefulContent?: () => void;
+  onFirstVisibleContent?: () => void;
 };
 
 /**
@@ -265,10 +330,13 @@ export type StreamContentWatcher = {
  * Also tracks `sawError` so an already-emitted structured error is not rewritten
  * as empty content (parity with Claude #3685 `lifecycle.hasError` and readiness #8972).
  */
-export function createStreamContentWatcher(): StreamContentWatcher {
+export function createStreamContentWatcher(
+  options: StreamContentWatcherOptions = {}
+): StreamContentWatcher {
   const MAX_BUFFERED = 64 * 1024;
   let pending = "";
   let content = false;
+  let visibleContent = false;
   let legitEmpty = false;
   let sse = false;
   let error = false;
@@ -277,7 +345,18 @@ export function createStreamContentWatcher(): StreamContentWatcher {
     if (!frame) return;
     if (!sse && SSE_FIELD_LINE.test(frame)) sse = true;
     if (!error && frameHasStructuredStreamError(frame)) error = true;
-    if (!content && hasUsefulStreamContent(frame)) content = true;
+    if (!content && hasUsefulStreamContent(frame)) {
+      content = true;
+      try {
+        options.onFirstUsefulContent?.();
+      } catch {}
+    }
+    if (!visibleContent && hasVisibleStreamContent(frame)) {
+      visibleContent = true;
+      try {
+        options.onFirstVisibleContent?.();
+      } catch {}
+    }
     if (legitEmpty) return;
     for (const match of frame.matchAll(TERMINAL_REASON_PATTERN)) {
       if (LEGIT_EMPTY_TERMINAL_REASONS.has(match[1])) {
@@ -307,6 +386,7 @@ export function createStreamContentWatcher(): StreamContentWatcher {
       pending = "";
     },
     sawContent: () => content,
+    sawVisibleContent: () => visibleContent,
     sawLegitEmptyTerminal: () => legitEmpty,
     sawSseFrame: () => sse,
     sawError: () => error,
@@ -515,6 +595,9 @@ export async function ensureStreamReadiness(
     provider?: string | null;
     model?: string | null;
     log?: StreamReadinessLogger | null;
+    onFirstUpstreamByte?: () => void;
+    onFirstUsefulContent?: () => void;
+    onFirstVisibleContent?: () => void;
   }
 ): Promise<StreamReadinessResult> {
   if (!response.body || options.timeoutMs <= 0) return { ok: true, response };
@@ -522,6 +605,11 @@ export async function ensureStreamReadiness(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   const decoder = new TextDecoder();
+  const contentWatcher = createStreamContentWatcher({
+    onFirstUsefulContent: options.onFirstUsefulContent,
+    onFirstVisibleContent: options.onFirstVisibleContent,
+  });
+  let firstByteReported = false;
   const readinessState: StreamReadinessSignalState = {
     currentEvent: "",
     dataLines: [],
@@ -601,6 +689,7 @@ export async function ensureStreamReadiness(
       }
 
       if (readResult.done) {
+        contentWatcher.finish();
         const tail = decoder.decode(undefined, { stream: false });
         if (tail && appendStreamReadinessSignal(readinessState, tail)) {
           handedOffReader = true;
@@ -638,8 +727,15 @@ export async function ensureStreamReadiness(
       }
 
       if (!readResult.value) continue;
+      if (!firstByteReported) {
+        firstByteReported = true;
+        try {
+          options.onFirstUpstreamByte?.();
+        } catch {}
+      }
       chunks.push(readResult.value);
       const decodedChunk = decoder.decode(readResult.value, { stream: true });
+      contentWatcher.note(decodedChunk);
 
       // Liveness extension: bytes arrived → connection is alive, not dead.
       // Reset the deadline so slow-but-alive upstreams (reasoning warm-ups,

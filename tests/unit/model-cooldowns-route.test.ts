@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getAvailabilityReport,
+  clearModelConnectionUnavailability,
   clearModelUnavailability,
   resetAllAvailability,
 } from "../../src/domain/modelAvailability.ts";
@@ -30,9 +31,28 @@ test("getAvailabilityReport: returns active lockout with positive remainingMs", 
     const entry = report.find((e) => e.provider === "test-prov" && e.model === "test-model");
     assert.ok(entry, "lockout should appear in report");
     assert.ok(entry.remainingMs > 0, "remainingMs should be positive");
+    assert.equal(entry.connectionId, TEST_CONN);
+    assert.equal(entry.scope, "connection-model");
+    assert.match(entry.lockedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(entry.until > Date.now());
   } finally {
     cleanup("test-prov", "test-model");
   }
+});
+
+test("clearModelConnectionUnavailability removes only the selected account", () => {
+  lockModel("prov-exact", "conn-a", "model-exact", "slow_start", 60_000, {});
+  lockModel("prov-exact", "conn-b", "model-exact", "slow_start", 60_000, {});
+
+  assert.equal(clearModelConnectionUnavailability("prov-exact", "conn-a", "model-exact"), true);
+  const report = getAvailabilityReport().filter(
+    (entry) => entry.provider === "prov-exact" && entry.model === "model-exact"
+  );
+  assert.deepEqual(
+    report.map((entry) => entry.connectionId),
+    ["conn-b"]
+  );
+  clearModelLock("prov-exact", "conn-b", "model-exact");
 });
 
 test("clearModelUnavailability: removes matching lockout and returns true", () => {

@@ -632,6 +632,7 @@ export async function getUsageDb(sinceIso?: string | null, limit?: number, curso
       success: toNumber(r.success) === 1,
       latencyMs: toNumber(r.latency_ms),
       timeToFirstTokenMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
+      firstForwardedChunkMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
       upstreamHeadersMs: r.upstream_headers_ms != null ? toNumber(r.upstream_headers_ms) : null,
       requestToHeadersMs:
         r.request_to_headers_ms != null ? toNumber(r.request_to_headers_ms) : null,
@@ -908,6 +909,7 @@ export async function getUsageHistory(filter: UsageHistoryFilter = {}) {
       success: toNumber(r.success) === 1,
       latencyMs: toNumber(r.latency_ms),
       timeToFirstTokenMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
+      firstForwardedChunkMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
       upstreamHeadersMs: r.upstream_headers_ms != null ? toNumber(r.upstream_headers_ms) : null,
       requestToHeadersMs:
         r.request_to_headers_ms != null ? toNumber(r.request_to_headers_ms) : null,

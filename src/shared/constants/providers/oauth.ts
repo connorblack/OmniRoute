@@ -84,7 +84,7 @@ export const OAUTH_PROVIDERS = {
     riskNoticeVariant: "oauth",
     hasFree: true,
     authHint:
-      "Import your Antigravity CLI (`agy`) login (paste/upload its token file), auto-detect a local CLI login, or sign in with Google. Shares the Antigravity backend (incl. Claude models).",
+      "Import the Antigravity CLI (`agy`) login, auto-detect a local CLI login, or sign in with Google. AGY is a CLI credential provider and remains separate from the Antigravity desktop/IDE provider.",
   },
   kiro: {
     id: "kiro",
@@ -142,7 +142,14 @@ export const OAUTH_PROVIDERS = {
     subscriptionRisk: true,
     riskNoticeVariant: "oauth",
   },
-  github: { id: "github", serviceKinds: ["llm"], alias: "gh", name: "GitHub Copilot", icon: "code", color: "#333333" },
+  github: {
+    id: "github",
+    serviceKinds: ["llm"],
+    alias: "gh",
+    name: "GitHub Copilot",
+    icon: "code",
+    color: "#333333",
+  },
   "gitlab-duo": {
     id: "gitlab-duo",
     serviceKinds: ["llm"],

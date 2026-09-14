@@ -75,6 +75,9 @@ export function assembleStreamingPipeline(
      * request's pre-handoff readiness gate, so slow-first-content reasoning
      * models keep the same generous budget in both phases. */
     contentStallTimeoutMs?: number;
+    onFirstUpstreamByte?: () => void;
+    onFirstUsefulContent?: () => void;
+    onFirstVisibleContent?: () => void;
   },
   deps: StreamingPipelineDeps = DEFAULT_DEPS
 ) {
@@ -90,7 +93,12 @@ export function assembleStreamingPipeline(
     args.providerResponse,
     args.transformStream,
     args.streamController,
-    { contentStallTimeoutMs: args.contentStallTimeoutMs }
+    {
+      contentStallTimeoutMs: args.contentStallTimeoutMs,
+      onFirstUpstreamByte: args.onFirstUpstreamByte,
+      onFirstUsefulContent: args.onFirstUsefulContent,
+      onFirstVisibleContent: args.onFirstVisibleContent,
+    }
   );
   if (typeof args.createPiiTransform === "function") {
     piiStream = piiStream.pipeThrough((args.createPiiTransform as () => TransformStream)());

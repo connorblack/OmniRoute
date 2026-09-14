@@ -8,6 +8,8 @@ import {
   type ResilienceSettings,
   type ResilienceSettingsPatch,
 } from "@/lib/resilience/settings";
+import { resolveModelLockoutSettings } from "@/lib/resilience/modelLockoutSettings";
+import { getSlowStartStates } from "@omniroute/open-sse/services/slowStartCooldown";
 import { updateResilienceSchema } from "@/shared/validation/schemas";
 import { isValidationFailure, validateBody } from "@/shared/validation/helpers";
 import { resetAllCircuitBreakers } from "@/shared/utils/circuitBreaker";
@@ -126,10 +128,12 @@ async function syncRuntimeSettings(resilienceSettings: ResilienceSettings) {
 /**
  * GET /api/resilience — Get current resilience configuration
  */
-export async function GET() {
+export async function GET(request?: Request) {
   try {
     const settings = await getCachedSettings();
     const resilience = resolveResilienceSettings(settings);
+    const includeSlowStart =
+      request !== undefined && new URL(request.url).searchParams.get("include") === "slowStart";
 
     return NextResponse.json({
       requestQueue: resilience.requestQueue,
@@ -146,6 +150,14 @@ export async function GET() {
       quotaPreflight: resilience.quotaPreflight,
       providerQuotaOverrides: resilience.providerQuotaOverrides,
       credentialHealthCheck: resilience.credentialHealthCheck,
+      ...(includeSlowStart
+        ? {
+            slowStart: {
+              policy: resolveModelLockoutSettings(settings).slowStart,
+              states: getSlowStartStates(),
+            },
+          }
+        : {}),
       legacy: buildLegacyResilienceCompat(resilience),
     });
   } catch (err: unknown) {

@@ -4,6 +4,7 @@ export interface LogStreamOptions {
   follow?: boolean;
   timeout?: number;
   headers?: HeadersInit;
+  query?: Record<string, string | number | null | undefined>;
 }
 
 export interface LogStream {
@@ -23,10 +24,12 @@ export function createLogStream(options: LogStreamOptions = {}): LogStream {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let url = `${baseUrl}/api/cli-tools/logs?follow=${follow}`;
-      if (filters.length > 0) {
-        url += `&filter=${encodeURIComponent(filters.join(","))}`;
+      const params = new URLSearchParams({ follow: String(follow) });
+      if (filters.length > 0) params.set("filter", filters.join(","));
+      for (const [key, value] of Object.entries(options.query || {})) {
+        if (value !== undefined && value !== null) params.set(key, String(value));
       }
+      const url = `${baseUrl.replace(/\/$/, "")}/api/cli-tools/logs?${params}`;
 
       const timeoutId = setTimeout(() => {
         if (follow) return; // Don't timeout follow mode

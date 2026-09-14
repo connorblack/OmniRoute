@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { createDecipheriv, scryptSync } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isLoopbackUrl } from "../api.mjs";
+import { apiFetch, getBaseUrl, isLoopbackUrl, readApiResponse } from "../api.mjs";
 import { resolveDataDir, resolveStoragePath } from "../data-dir.mjs";
 import { getCliToken, CLI_TOKEN_HEADER } from "../utils/cliToken.mjs";
 import { printHeading } from "../io.mjs";
 import { t } from "../i18n.mjs";
+import { emit } from "../output.mjs";
 import { readDatabaseHealth, readEncryptedCredentialSamples } from "../sqlite.mjs";
 
 const STATIC_SALT = "omniroute-field-encryption-v1";
@@ -595,8 +596,49 @@ export async function collectDoctorChecks(context = {}, options = {}) {
   }
 
   return {
+    scope: "local",
     dataDir,
     dbPath,
+    checks,
+    summary: {
+      ok: checks.filter((check) => check.status === "ok").length,
+      warn: checks.filter((check) => check.status === "warn").length,
+      fail: checks.filter((check) => check.status === "fail").length,
+    },
+  };
+}
+
+const REMOTE_DOCTOR_ENDPOINTS = [
+  ["Gateway health", "/api/monitoring/health"],
+  ["Provider limits", "/api/usage/provider-limits"],
+  ["Model lockouts", "/api/resilience/model-cooldowns"],
+];
+
+export async function collectRemoteDoctorChecks(opts = {}) {
+  const checks = [];
+  const timeout = Number.parseInt(opts.timeout, 10);
+  for (const [name, endpoint] of REMOTE_DOCTOR_ENDPOINTS) {
+    try {
+      const res = await apiFetch(endpoint, {
+        ...opts,
+        retry: false,
+        timeout: Number.isFinite(timeout) ? timeout : 5000,
+      });
+      const data = await readApiResponse(res);
+      checks.push(ok(name, `HTTP ${res.status}`, { endpoint, data }));
+    } catch (error) {
+      const status = Reflect.get(Object(error), "status");
+      checks.push(
+        fail(name, error instanceof Error ? error.message : String(error), {
+          endpoint,
+          status: typeof status === "number" ? status : 0,
+        })
+      );
+    }
+  }
+  return {
+    scope: "remote",
+    target: getBaseUrl(opts),
     checks,
     summary: {
       ok: checks.filter((check) => check.status === "ok").length,
@@ -620,34 +662,38 @@ export function registerDoctor(program) {
     .option("--no-liveness", "Skip HTTP health endpoint probing")
     .option("--host <host>", "Host for server liveness probing", "127.0.0.1")
     .option("--liveness-url <url>", "Full health endpoint URL override")
+    .option("--remote", "Run gateway diagnostics against the selected context only")
     .action(async (opts, cmd) => {
-      const globalOpts = cmd.optsWithGlobals();
-      const exitCode = await runDoctorCommand({ ...opts, output: globalOpts.output });
+      const exitCode = await runDoctorCommand({ ...cmd.optsWithGlobals(), ...opts });
       if (exitCode !== 0) process.exit(exitCode);
     });
 }
 
 export async function runDoctorCommand(opts = {}, context = {}) {
   const isJson = (opts.output ?? "table") === "json";
-  const skipLiveness = !(opts.liveness ?? true);
-
-  const result = await collectDoctorChecks(context, {
-    skipLiveness,
-    livenessHost: opts.host,
-    livenessUrl: opts.livenessUrl,
-  });
+  const result = opts.remote
+    ? await collectRemoteDoctorChecks(opts)
+    : await collectDoctorChecks(context, {
+        skipLiveness: !(opts.liveness ?? true),
+        livenessHost: opts.host,
+        livenessUrl: opts.livenessUrl,
+      });
 
   if (isJson) {
-    console.log(JSON.stringify(result, null, 2));
+    emit(result, opts);
   } else {
-    printHeading("OmniRoute Doctor");
-    console.log(`Data dir: ${result.dataDir}`);
-    console.log(`Database: ${result.dbPath}\n`);
+    printHeading(result.scope === "remote" ? "OmniRoute remote doctor" : "OmniRoute local doctor");
+    if (result.scope === "remote") {
+      process.stdout.write(`Target: ${result.target}\n\n`);
+    } else {
+      process.stdout.write(`Data dir: ${result.dataDir}\n`);
+      process.stdout.write(`Database: ${result.dbPath}\n\n`);
+    }
     for (const check of result.checks) {
       printCheck(check);
     }
-    console.log(
-      `\nSummary: ${result.summary.ok} ok, ${result.summary.warn} warning(s), ${result.summary.fail} failure(s)`
+    process.stdout.write(
+      `\nSummary: ${result.summary.ok} ok, ${result.summary.warn} warning(s), ${result.summary.fail} failure(s)\n`
     );
   }
 

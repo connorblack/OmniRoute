@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { t } from "../i18n.mjs";
 
@@ -127,6 +127,65 @@ const endpointSchema = [
   { key: "summary", header: "Summary", width: 40, formatter: (v) => truncate(v, 40) },
 ];
 
+const RESERVED_REQUEST_HEADERS = new Set(["authorization", "cookie", "x-omniroute-cli-token"]);
+
+function parsePairs(values = []) {
+  return values.map((value) => {
+    if (Array.isArray(value)) return [String(value[0] ?? ""), String(value[1] ?? "")];
+    const raw = String(value);
+    const index = raw.indexOf("=");
+    return index < 0 ? [raw, ""] : [raw.slice(0, index), raw.slice(index + 1)];
+  });
+}
+
+export async function runOpenapiTry(path, opts = {}, globalOpts = {}) {
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
+    throw new Error("openapi try requires a relative path beginning with /");
+  }
+  const method = String(opts.method || "GET").toUpperCase();
+  const query = new URLSearchParams();
+  for (const [key, value] of parsePairs(opts.query)) {
+    if (key) query.append(key, value);
+  }
+  const headers = new Headers();
+  for (const [key, value] of parsePairs(opts.header)) {
+    const normalized = key.toLowerCase();
+    if (RESERVED_REQUEST_HEADERS.has(normalized)) {
+      throw new Error(`openapi try reserves the ${normalized} header for context authentication`);
+    }
+    if (key) headers.set(key, value);
+  }
+  if ((method === "GET" || method === "HEAD") && opts.body !== undefined) {
+    throw new Error(`${method} requests cannot include a body`);
+  }
+  const suffix = query.size > 0 ? `?${query}` : "";
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
+  const res = await apiFetch(`${path}${suffix}`, {
+    ...globalOpts,
+    method,
+    body: opts.body,
+    headers,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
+  });
+  const body = await readApiResponse(res);
+  return {
+    status: res.status,
+    statusText: res.statusText || "",
+    contentType: res.headers.get("content-type"),
+    requestId: res.headers.get("x-request-id") || res.headers.get("x-correlation-id"),
+    body,
+  };
+}
+
+async function fetchSpec(globalOpts) {
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
+  const res = await apiFetch("/api/openapi/spec", {
+    ...globalOpts,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
+  });
+  return readApiResponse(res);
+}
+
 export function registerOpenapi(program) {
   const api = program.command("openapi").description(t("openapi.description"));
 
@@ -136,12 +195,7 @@ export function registerOpenapi(program) {
     .option("--format <f>", t("openapi.dump.format"), "yaml")
     .option("--out <path>", t("openapi.dump.out"))
     .action(async (opts, cmd) => {
-      const res = await apiFetch("/api/openapi/spec");
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const data = await res.json();
+      const data = await fetchSpec(cmd.optsWithGlobals());
       const serialized =
         opts.format === "yaml" ? toYaml(data) + "\n" : JSON.stringify(data, null, 2);
       if (opts.out) {
@@ -156,12 +210,7 @@ export function registerOpenapi(program) {
     .command("validate")
     .description(t("openapi.validate.description"))
     .action(async (opts, cmd) => {
-      const res = await apiFetch("/api/openapi/spec");
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const spec = await res.json();
+      const spec = await fetchSpec(cmd.optsWithGlobals());
       try {
         validateBasic(spec);
         process.stdout.write("Spec is valid\n");
@@ -176,21 +225,12 @@ export function registerOpenapi(program) {
     .description(t("openapi.try.description"))
     .option("--method <m>", t("openapi.try.method"), "GET")
     .option("--body <file>", t("openapi.try.body"))
-    .option("--query <kv>", t("openapi.try.query"), (v, prev = []) => [...prev, v.split("=")], [])
-    .option("--header <kv>", t("openapi.try.header"), (v, prev = []) => [...prev, v.split("=")], [])
+    .option("--query <kv>", t("openapi.try.query"), (v, prev = []) => [...prev, v], [])
+    .option("--header <kv>", t("openapi.try.header"), (v, prev = []) => [...prev, v], [])
     .action(async (path, opts, cmd) => {
       const body = opts.body ? JSON.parse(readFileSync(opts.body, "utf8")) : undefined;
-      const query = Object.fromEntries(opts.query ?? []);
-      const headers = Object.fromEntries(opts.header ?? []);
-      const res = await apiFetch("/api/openapi/try", {
-        method: "POST",
-        body: { path, method: opts.method, body, query, headers },
-      });
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      emit(await res.json(), cmd.optsWithGlobals());
+      const globalOpts = cmd.optsWithGlobals();
+      emit(await runOpenapiTry(path, { ...opts, body }, globalOpts), globalOpts);
     });
 
   api
@@ -198,12 +238,7 @@ export function registerOpenapi(program) {
     .description(t("openapi.endpoints.description"))
     .option("--search <q>", t("openapi.endpoints.search"))
     .action(async (opts, cmd) => {
-      const res = await apiFetch("/api/openapi/spec");
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const spec = await res.json();
+      const spec = await fetchSpec(cmd.optsWithGlobals());
       const rows = extractEndpoints(spec).filter((row) => matchesSearch(row, opts.search));
       emit(rows, cmd.optsWithGlobals(), endpointSchema);
     });
@@ -212,12 +247,7 @@ export function registerOpenapi(program) {
     .command("paths")
     .description(t("openapi.paths.description"))
     .action(async (opts, cmd) => {
-      const res = await apiFetch("/api/openapi/spec");
-      if (!res.ok) {
-        process.stderr.write(`Error: ${res.status}\n`);
-        process.exit(1);
-      }
-      const spec = await res.json();
+      const spec = await fetchSpec(cmd.optsWithGlobals());
       emit(
         extractPaths(spec).map((p) => ({ path: p })),
         cmd.optsWithGlobals()
