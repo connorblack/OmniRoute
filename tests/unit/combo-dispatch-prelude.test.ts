@@ -1186,8 +1186,16 @@ test("tryPinnedModelDispatch: a pinned round-robin attempt that finds the slot f
     null,
     "a full/timed-out slot must be treated as the pinned target being unavailable (Bug2 rule 2)"
   );
-  assert.equal(res.suppressPinRecording, true, "falls back per Bug1's rules — the pin must not move");
-  assert.equal(dispatched, false, "the pinned model must never be dispatched while its slot is unavailable");
+  assert.equal(
+    res.suppressPinRecording,
+    true,
+    "falls back per Bug1's rules — the pin must not move"
+  );
+  assert.equal(
+    dispatched,
+    false,
+    "the pinned model must never be dispatched while its slot is unavailable"
+  );
   assert.ok(
     ctx.records.some((r) => r.level === "warn" && r.msg.includes("queue full")),
     "the queue-full/timeout must be observable in the log"

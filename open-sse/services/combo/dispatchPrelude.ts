@@ -25,6 +25,7 @@ import { handlePipelineChat, type PipelineStep } from "../pipeline.ts";
 import { resolveComboQueueDepth, resolveComboSetupConfig } from "../comboConfig.ts";
 import { clampComboDepth, clampGlobalAttempts, resolveDelayMs } from "./comboPredicates.ts";
 import { COMBO_HEDGE_CANCELLED_REASON } from "./comboAbortReasons.ts";
+import { applyStrategyOrdering } from "./applyStrategyOrdering.ts";
 import {
   deriveRequestCompatibilityRequirements,
   isVisionIncompatibleTarget,
@@ -313,7 +314,10 @@ export function resolvePinnedTier(
   return [pinnedTarget, ...siblings];
 }
 
-function findComboByName(allCombos: ComboCollectionLike | undefined, name: string): ComboLike | null {
+function findComboByName(
+  allCombos: ComboCollectionLike | undefined,
+  name: string
+): ComboLike | null {
   const list: ComboLike[] = Array.isArray(allCombos)
     ? (allCombos as ComboLike[])
     : ((allCombos as { combos?: ComboLike[] } | undefined)?.combos ?? []);
@@ -422,6 +426,7 @@ type PinnedMemberPlan = {
   hedging: boolean;
   hedgeDelayMs: number;
   maxParallelTargets: number;
+  releaseReservation: (() => void) | null;
 };
 
 type PinnedCandidateResult = {
@@ -437,9 +442,11 @@ function resolvePinnedMaxParallelTargets(value: unknown, candidateCount: number)
 
 async function buildPinnedMemberPlan(args: {
   member: ResolvedComboTarget | null;
+  body: Record<string, unknown>;
   combo: ComboLike;
   strategy: string;
   config: ComboSetupConfig;
+  sessionKey?: string | null;
   settings?: Record<string, unknown> | null;
   allCombos?: ComboCollectionLike;
   hiddenModelsByProvider?: HiddenModelsByProvider;
@@ -448,9 +455,11 @@ async function buildPinnedMemberPlan(args: {
 }): Promise<PinnedMemberPlan> {
   const {
     member,
+    body,
     combo,
     strategy,
     config,
+    sessionKey,
     settings,
     allCombos,
     hiddenModelsByProvider,
@@ -463,6 +472,7 @@ async function buildPinnedMemberPlan(args: {
       hedging: false,
       hedgeDelayMs: 0,
       maxParallelTargets: 1,
+      releaseReservation: null,
     };
   }
 
@@ -475,29 +485,25 @@ async function buildPinnedMemberPlan(args: {
     settings,
     hiddenModelsByProvider,
   });
-  let candidates = await expandTargetsForAllStrategies({
+  const policyConfig = { ...policy.config };
+  const expandedCandidates = await expandTargetsForAllStrategies({
     strategy: policy.strategy,
     targets: [policy.target],
     comboName: policy.combo.name,
-    config: policy.config as Record<string, unknown>,
+    config: policyConfig,
     settings,
     log,
     apiKeyAllowedConnectionIds: apiKeyAllowedConnections ?? null,
   });
-  if (policy.strategy === "random") {
-    candidates = fisherYatesShuffle(candidates);
-  } else if (policy.strategy === "strict-random" && candidates.length > 1) {
-    const selectedKey = await getNextFromDeck(
-      `combo:${policy.combo.name}:pinned:${policy.target.modelStr}`,
-      candidates.map((candidate) => candidate.executionKey)
-    );
-    const selected =
-      candidates.find((candidate) => candidate.executionKey === selectedKey) ?? candidates[0];
-    candidates = [
-      selected,
-      ...candidates.filter((candidate) => candidate.executionKey !== selected.executionKey),
-    ];
-  }
+  const { orderedTargets: candidates, quotaShareRelease: releaseReservation } =
+    await applyStrategyOrdering(policy.strategy, expandedCandidates, {
+      combo: policy.combo,
+      config: policyConfig,
+      body,
+      log,
+      apiKeyAllowedConnections: apiKeyAllowedConnections ?? null,
+      sessionKey,
+    });
   const hedging =
     policy.config.zeroLatencyOptimizationsEnabled === true &&
     policy.config.hedging === true &&
@@ -510,6 +516,7 @@ async function buildPinnedMemberPlan(args: {
     maxParallelTargets: hedging
       ? resolvePinnedMaxParallelTargets(policy.combo.config?.maxParallelTargets, candidates.length)
       : 1,
+    releaseReservation,
   };
 }
 
@@ -815,25 +822,32 @@ export async function tryPinnedModelDispatch(args: {
       );
       const plan = await buildPinnedMemberPlan({
         member,
+        body,
         combo,
         strategy,
         config,
+        sessionKey: effectiveSessionId,
         settings,
         allCombos,
         hiddenModelsByProvider,
         log,
         apiKeyAllowedConnections,
       });
-      const accepted = await attemptPinnedMemberPlan({
-        plan,
-        modelStr: memberModelStr,
-        body,
-        combo,
-        clientRequestedStream,
-        config,
-        handleSingleModelWithTimeout,
-        log,
-      });
+      let accepted: Response | null;
+      try {
+        accepted = await attemptPinnedMemberPlan({
+          plan,
+          modelStr: memberModelStr,
+          body,
+          combo,
+          clientRequestedStream,
+          config,
+          handleSingleModelWithTimeout,
+          log,
+        });
+      } finally {
+        plan.releaseReservation?.();
+      }
       if (accepted) {
         if (!isPrimary && effectiveSessionId) {
           recordSessionModelUsage(
