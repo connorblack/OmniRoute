@@ -112,6 +112,15 @@ test("response provenance keeps NVIDIA, relay, and client outcomes separate", ()
   );
   assert.equal(
     classifyAttemptOutcomeSource({
+      status: 200,
+      transport: "relay",
+      upstreamLifecycleStatus: null,
+      upstreamRequestId: null,
+    }),
+    "upstream"
+  );
+  assert.equal(
+    classifyAttemptOutcomeSource({
       status: 502,
       transport: "relay",
       upstreamLifecycleStatus: null,
@@ -135,7 +144,7 @@ test("response provenance keeps NVIDIA, relay, and client outcomes separate", ()
       upstreamLifecycleStatus: null,
       upstreamRequestId: null,
     }),
-    "local"
+    "upstream"
   );
 });
 
