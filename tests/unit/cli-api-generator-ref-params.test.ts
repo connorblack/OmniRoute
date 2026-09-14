@@ -96,6 +96,17 @@ test("generator resolves a $ref path parameter into --id and substitutes {id} in
     );
     assert.doesNotMatch(generated, /url = "\/api\/widgets\/\{id\}";\s*\n\s*const res/);
 
+    assert.match(
+      generated,
+      /const res = await apiFetch\(url, \{ \.\.\.gOpts, method: "PATCH", body/,
+      "generated commands must forward the selected context and remote target"
+    );
+    assert.match(
+      generated,
+      /const data = await readApiResponse\(res\)/,
+      "generated commands must reject non-success responses through the shared API contract"
+    );
+
     // Required and optional request bodies must preserve their OpenAPI semantics.
     assert.match(
       generated,
