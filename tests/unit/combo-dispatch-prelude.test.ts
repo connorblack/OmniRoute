@@ -522,6 +522,56 @@ test("tryPinnedModelDispatch: preserves the resolved account on an account-pinne
   assert.equal(selectedConnection, connectionId);
 });
 
+test("tryPinnedModelDispatch: strict-random rotates the primary pinned account", async () => {
+  const provider = "strictpinnedaccount";
+  const first = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "strict-pinned-account-first",
+    isActive: true,
+    apiKey: "test-strict-pinned-account-first",
+  });
+  const second = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "strict-pinned-account-second",
+    isActive: true,
+    apiKey: "test-strict-pinned-account-second",
+  });
+  invalidateDbCache();
+
+  const model = `${provider}/deepseek`;
+  const ctx = setup({
+    name: "strict-pinned-account-combo",
+    strategy: "strict-random",
+    models: [{ model }],
+    config: { connectionAwareExpansion: true },
+  });
+  const selectedConnections: string[] = [];
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await tryPinnedModelDispatch({
+      body: ctx.body,
+      combo: ctx.combo,
+      pinnedModel: model,
+      allCombos: [ctx.combo],
+      config: ctx.config,
+      strategy: "strict-random",
+      clientRequestedStream: false,
+      handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+        const connectionId = target && "connectionId" in target ? target.connectionId : null;
+        assert.ok(connectionId);
+        selectedConnections.push(connectionId);
+        return okResponse("selected");
+      },
+      log: ctx.log,
+    });
+    assert.ok(result.response);
+  }
+
+  assert.deepEqual(new Set(selectedConnections), new Set([first.id, second.id]));
+});
+
 test("tryPinnedModelDispatch: hedges a pinned model across active accounts", async () => {
   const provider = "pinnedhedge";
   const first = await createProviderConnection({
