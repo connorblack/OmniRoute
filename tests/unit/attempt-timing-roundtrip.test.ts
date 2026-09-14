@@ -37,7 +37,10 @@ test("attempt timing and provenance survive both persistence paths", async () =>
     connectionId: "connection-3",
     duration: 63,
     terminalMs: 63,
-    ttftMs: 57,
+    ttftMs: 49,
+    firstUpstreamByteMs: 45,
+    firstUsefulEventMs: 50,
+    firstContentMs: 60,
     ...common,
   });
 
@@ -46,7 +49,11 @@ test("attempt timing and provenance survive both persistence paths", async () =>
   assert.equal(call.upstreamHeadersMs, 42);
   assert.equal(call.requestToHeadersMs, 57);
   assert.equal(call.terminalMs, 63);
-  assert.equal(call.ttftMs, 57);
+  assert.equal(call.ttftMs, 49);
+  assert.equal(call.firstForwardedChunkMs, 49);
+  assert.equal(call.firstUpstreamByteMs, 45);
+  assert.equal(call.firstUsefulEventMs, 50);
+  assert.equal(call.firstContentMs, 60);
   assert.equal(call.outcomeSource, "upstream");
   assert.equal(call.upstreamStatus, 503);
   assert.equal(call.upstreamRequestId, "nvcf-test-request");

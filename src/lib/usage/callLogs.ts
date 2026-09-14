@@ -448,6 +448,7 @@ function mapSummaryRow(row: CallLogSummaryRow) {
     firstContentMs: row.first_content_ms != null ? toNumber(row.first_content_ms) : null,
     terminalMs: row.terminal_ms != null ? toNumber(row.terminal_ms) : null,
     ttftMs: row.ttft_ms != null ? toNumber(row.ttft_ms) : null,
+    firstForwardedChunkMs: row.ttft_ms != null ? toNumber(row.ttft_ms) : null,
     outcomeSource: row.outcome_source || null,
     upstreamStatus: row.upstream_status != null ? toNumber(row.upstream_status) : null,
     upstreamRequestId: row.upstream_request_id || null,

@@ -664,6 +664,18 @@ export async function handleChatCore({
     maxDepth = 3
   ): EffectiveServiceTier | null => resolveReportedServiceTierFor(provider, payload, maxDepth);
   let latestAttemptObservation: AttemptObservation | null = null;
+  const streamPhaseTimings: {
+    firstUpstreamByteMs: number | null;
+    firstUsefulEventMs: number | null;
+    firstContentMs: number | null;
+  } = {
+    firstUpstreamByteMs: null,
+    firstUsefulEventMs: null,
+    firstContentMs: null,
+  };
+  const markStreamPhase = (phase: keyof typeof streamPhaseTimings) => {
+    if (streamPhaseTimings[phase] === null) streamPhaseTimings[phase] = Date.now() - startTime;
+  };
   // Failure usage record building extracted to chatCore/failureUsage.ts (#3501); the handler keeps
   // the fire-and-forget save + computes latencyMs, so the call sites stay byte-identical.
   const persistFailureUsage = (
@@ -5730,6 +5742,9 @@ export async function handleChatCore({
     provider,
     model,
     log,
+    onFirstUpstreamByte: () => markStreamPhase("firstUpstreamByteMs"),
+    onFirstUsefulContent: () => markStreamPhase("firstUsefulEventMs"),
+    onFirstVisibleContent: () => markStreamPhase("firstContentMs"),
   });
   if (streamReadiness.ok === false) {
     const { response: failureResponse, reason } = streamReadiness;
@@ -5752,6 +5767,9 @@ export async function handleChatCore({
       ),
       claudeCacheMeta: claudePromptCacheLogMeta,
       cacheSource: "upstream",
+      firstUpstreamByteMs: streamPhaseTimings.firstUpstreamByteMs,
+      firstUsefulEventMs: streamPhaseTimings.firstUsefulEventMs,
+      firstContentMs: streamPhaseTimings.firstContentMs,
     });
     persistFailureUsage(failureResponse.status, streamReadiness.code);
     // Do NOT call onStreamFailure — a stream stall is an upstream issue,
@@ -5983,6 +6001,9 @@ export async function handleChatCore({
       claudeCacheUsageMeta: cacheUsageLogMeta,
       cacheSource: "upstream",
       ttftMs: ttft,
+      firstUpstreamByteMs: streamPhaseTimings.firstUpstreamByteMs,
+      firstUsefulEventMs: streamPhaseTimings.firstUsefulEventMs,
+      firstContentMs: streamPhaseTimings.firstContentMs,
     });
 
     recordStreamingCost({
@@ -6173,6 +6194,9 @@ export async function handleChatCore({
     // that same patience for their first REAL content, not just their first
     // lifecycle frame. See pipeWithDisconnect's own doc comment.
     contentStallTimeoutMs: streamReadinessPolicy.timeoutMs,
+    onFirstUpstreamByte: () => markStreamPhase("firstUpstreamByteMs"),
+    onFirstUsefulContent: () => markStreamPhase("firstUsefulEventMs"),
+    onFirstVisibleContent: () => markStreamPhase("firstContentMs"),
   });
 
   // ── Gamification event (fire-and-forget) ──

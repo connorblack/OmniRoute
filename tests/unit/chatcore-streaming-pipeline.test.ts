@@ -90,6 +90,25 @@ test("pipeline arguments preserve the dependency parameter contracts", () => {
   assert.equal(contracts.clientResponseFormat, "openai");
 });
 
+test("pipeline forwards stream phase callbacks to the disconnect pipe", () => {
+  let captured: Record<string, unknown> | undefined;
+  const callbacks = {
+    onFirstUpstreamByte: () => {},
+    onFirstUsefulContent: () => {},
+    onFirstVisibleContent: () => {},
+  };
+  const { deps } = makeDeps({
+    pipeWithDisconnect: (...args: unknown[]) => {
+      captured = args[3] as Record<string, unknown>;
+      return fakeStream("pii-base", []);
+    },
+  });
+  assembleStreamingPipeline(baseArgs(callbacks), deps);
+  assert.equal(captured?.onFirstUpstreamByte, callbacks.onFirstUpstreamByte);
+  assert.equal(captured?.onFirstUsefulContent, callbacks.onFirstUsefulContent);
+  assert.equal(captured?.onFirstVisibleContent, callbacks.onFirstVisibleContent);
+});
+
 test("baseline (no pii, no progress, no echo) → only heartbeat in the chain", () => {
   const { deps, log } = makeDeps();
   assembleStreamingPipeline(baseArgs(), deps);

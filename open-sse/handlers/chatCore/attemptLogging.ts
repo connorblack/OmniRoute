@@ -211,6 +211,9 @@ export type PersistAttemptLogsArgs = {
   claudeCacheUsageMeta?: Record<string, unknown>;
   cacheSource?: "upstream" | "semantic";
   ttftMs?: number | null;
+  firstUpstreamByteMs?: number | null;
+  firstUsefulEventMs?: number | null;
+  firstContentMs?: number | null;
 };
 
 export type PersistAttemptLogsContext = {
@@ -354,6 +357,9 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     claudeCacheUsageMeta,
     cacheSource,
     ttftMs,
+    firstUpstreamByteMs,
+    firstUsefulEventMs,
+    firstContentMs,
   } = args;
   const {
     traceId,
@@ -476,9 +482,9 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     duration: elapsedMs,
     upstreamHeadersMs: attemptObservation?.upstreamHeadersMs ?? null,
     requestToHeadersMs: attemptObservation?.requestToHeadersMs ?? null,
-    firstUpstreamByteMs: null,
-    firstUsefulEventMs: ttftMs ?? null,
-    firstContentMs: null,
+    firstUpstreamByteMs: firstUpstreamByteMs ?? null,
+    firstUsefulEventMs: firstUsefulEventMs ?? null,
+    firstContentMs: firstContentMs ?? null,
     terminalMs: elapsedMs,
     ttftMs: ttftMs ?? attemptObservation?.requestToHeadersMs ?? null,
     outcomeSource: attemptObservation?.outcomeSource ?? null,
