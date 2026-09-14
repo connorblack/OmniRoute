@@ -3209,7 +3209,12 @@ test("chatCore releases account semaphore slots when upstream execution throws",
   assert.equal(getAccountSemaphoreStats()[semaphoreKey], undefined);
 });
 test("chatCore locks per-model quota failures without dropping quota helper references", async () => {
-  const model = "gemini-1.5-pro";
+  // gemini-1.5-flash deprecation-forwards to gemini-2.5-flash, which carries a
+  // real (non-zero) free-tier budget, so the pre-dispatch Gemini budget guard
+  // added in #gemini-per-model-budget lets a fresh connection's first request
+  // through and this test still exercises the legacy post-dispatch 402
+  // model-lock path it is named for.
+  const model = "gemini-1.5-flash";
   const connection = await providersDb.createProviderConnection({
     provider: "gemini",
     authType: "apikey",
