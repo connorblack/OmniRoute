@@ -139,8 +139,11 @@ test("unknown model has no local limit", () => {
 
 // ── accountFallback gate wiring ────────────────────────────────────────────
 
+// isModelLocked/getModelLockoutInfo read the ledger at their own Date.now(),
+// not an injected clock, so these two use real wall-clock timestamps.
 test("isModelLocked/getModelLockoutInfo derive from the ledger for a spent Gemini budget", () => {
-  for (let i = 0; i < 5; i++) settleOk("conn-lock", "gemini-3.8-flash", FIXED_NOW + i);
+  const now = Date.now();
+  for (let i = 0; i < 5; i++) settleOk("conn-lock", "gemini-3.8-flash", now + i);
   assert.equal(isModelLocked("gemini", "conn-lock", "gemini-3.8-flash"), true);
   const info = getModelLockoutInfo("gemini", "conn-lock", "gemini-3.8-flash");
   assert.equal(info?.reason, RateLimitReason.RATE_LIMIT_EXCEEDED);
@@ -151,10 +154,10 @@ test("isModelLocked/getModelLockoutInfo derive from the ledger for a spent Gemin
 });
 
 test("isModelLocked reports a spent RPD budget with the quota-exhausted reason", () => {
+  const now = Date.now();
   for (let i = 0; i < 20; i++) {
-    settleOk("conn-lock-rpd", "gemini-3.8-flash", FIXED_NOW + i * 61_000);
+    settleOk("conn-lock-rpd", "gemini-3.8-flash", now + i * 61_000);
   }
-  const nowMs = FIXED_NOW + 20 * 61_000;
   assert.equal(isModelLocked("gemini", "conn-lock-rpd", "gemini-3.8-flash"), true);
   const info = getModelLockoutInfo("gemini", "conn-lock-rpd", "gemini-3.8-flash");
   assert.equal(info?.reason, RateLimitReason.QUOTA_EXHAUSTED);
