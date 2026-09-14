@@ -134,10 +134,25 @@
     "rpd": -1,
     "tpm": 1000000
   },
+  "gemini-3-flash": {
+    "rpm": 5,
+    "rpd": 20,
+    "tpm": 250000
+  },
   "gemini-3-flash-live": {
     "rpm": -1,
     "rpd": -1,
     "tpm": 65000
+  },
+  "gemini-3.5-transcribe": {
+    "rpm": 3,
+    "rpd": 25,
+    "tpm": 10000
+  },
+  "gemini-3.5-transcribe-live": {
+    "rpm": -1,
+    "rpd": -1,
+    "tpm": 20000
   },
   "gemini-3.5-flash": {
     "rpm": 5,
@@ -173,5 +188,11 @@
     "rpm": 30,
     "rpd": 14400,
     "tpm": 16000
+  },
+  "gemini-flash-latest": {
+    "aliasOf": "gemini-3.8-flash"
+  },
+  "gemini-3.1-flash-lite-preview": {
+    "aliasOf": "gemini-3.1-flash-lite"
   }
 }
