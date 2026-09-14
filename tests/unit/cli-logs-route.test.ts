@@ -28,8 +28,26 @@ process.env.APP_LOG_FILE_PATH = logPath;
 
 const now = Date.now();
 const lines = [
-  JSON.stringify({ level: 30, msg: "provider connected", component: "router", time: now }),
-  JSON.stringify({ level: 40, msg: "rate limit hit", component: "rateLimit", time: now }),
+  JSON.stringify({
+    level: 30,
+    msg: "provider connected",
+    component: "router",
+    time: now,
+    requestId: "request-known",
+    comboName: "sellie/extractor",
+    status: 200,
+    durationMs: 120,
+  }),
+  JSON.stringify({
+    level: 40,
+    msg: "rate limit hit",
+    component: "rateLimit",
+    time: now,
+    requestId: "request-capacity",
+    comboName: "sellie/extractor",
+    status: 503,
+    durationMs: 42000,
+  }),
   JSON.stringify({ level: 20, msg: "debug trace output", component: "debug", time: now }),
   "not-valid-json-should-be-skipped",
 ];
@@ -81,6 +99,33 @@ test("GET /api/cli-tools/logs respects filter param", async () => {
     }),
     "filter should restrict results to matching component/message"
   );
+});
+
+test("GET /api/cli-tools/logs treats known filter values as levels", async () => {
+  const res = await GET(makeReq("filter=warn"));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(
+    body.map((entry: { level?: string }) => entry.level),
+    ["warn"]
+  );
+});
+
+test("GET /api/cli-tools/logs applies structured request filters on the server", async () => {
+  const request = await GET(makeReq("requestId=request-known"));
+  const requestRows = await request.json();
+  assert.equal(requestRows.length, 1);
+  assert.equal(requestRows[0].requestId, "request-known");
+
+  const capacity = await GET(
+    makeReq("combo=sellie%2Fextractor&status=503&durationMin=40000&durationMax=45000")
+  );
+  const capacityRows = await capacity.json();
+  assert.equal(capacityRows.length, 1);
+  assert.equal(capacityRows[0].requestId, "request-capacity");
+
+  const negative = await GET(makeReq("requestId=definitely-no-such-request"));
+  assert.deepEqual(await negative.json(), []);
 });
 
 test("GET /api/cli-tools/logs returns empty array when log file does not exist", async () => {
