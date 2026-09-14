@@ -52,8 +52,6 @@ ALIAS_TO_PROVIDER_ID["xiaomi"] = "xiaomi-mimo";
 // prefix is "llamacpp". Register it so parseModel("llamacpp/<model>") resolves
 // provider = "llama-cpp" instead of the identity fallback ("llamacpp").
 ALIAS_TO_PROVIDER_ID["llamacpp"] = "llama-cpp";
-// agy/ is the short alias for antigravity provider.
-ALIAS_TO_PROVIDER_ID["agy"] = "antigravity";
 // aq/ is the user-visible prefix for the Amazon Q (AWS Builder ID) provider.
 // The canonical provider ID is "amazon-q". Register it so parseModel("aq/<model>")
 // resolves provider = "amazon-q" instead of falling through to the identity fallback.

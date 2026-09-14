@@ -202,6 +202,36 @@ test("provider health matrix collapses alias-keyed signals into one canonical pr
   assert.equal(filteredByAlias.providers[0]?.circuitBreaker?.state, "OPEN");
 });
 
+test("provider health matrix keeps agy and antigravity as separate providers", async () => {
+  await providersDb.createProviderConnection({
+    id: "matrix-agy-connection",
+    provider: "agy",
+    authType: "oauth",
+    name: "agy-cli",
+    accessToken: "token-agy",
+    isActive: true,
+  });
+  await providersDb.createProviderConnection({
+    id: "matrix-antigravity-connection",
+    provider: "antigravity",
+    authType: "oauth",
+    name: "antigravity-desktop",
+    accessToken: "token-antigravity",
+    isActive: true,
+  });
+
+  const report = await matrix.buildProviderHealthMatrix({ includeHealthy: true, range: "24h" });
+  const providers = report.providers
+    .filter((provider) => provider.provider === "agy" || provider.provider === "antigravity")
+    .sort((left, right) => left.provider.localeCompare(right.provider));
+
+  assert.deepEqual(
+    providers.map((provider) => provider.provider),
+    ["agy", "antigravity"].sort()
+  );
+  assert.ok(providers.every((provider) => provider.connections.total === 1));
+});
+
 test("provider health matrix treats recovered models as degraded instead of error", async () => {
   const connection = (await providersDb.createProviderConnection({
     id: "matrix-recovered-connection",
