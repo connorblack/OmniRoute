@@ -2703,7 +2703,8 @@ export async function markAccountUnavailable(
       effectiveProviderProfile,
       null,
       null,
-      await resolveDailyResetForProvider(provider)
+      await resolveDailyResetForProvider(provider),
+      connectionId
     );
 
     // T-PROBE: probe-origin failures (model test-all) must never remove the

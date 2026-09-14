@@ -421,9 +421,10 @@ import {
   isModelScopeProvider,
 } from "../services/modelscopePolicy.ts";
 import {
-  incrementRequestCount,
-  incrementTokenUsage,
-  isTpmExhausted,
+  getGeminiBudgetBlock,
+  reserveGeminiRequest,
+  settleGeminiRequest,
+  type GeminiReservationHandle,
 } from "../services/geminiRateLimitTracker.ts";
 import { getProactiveCompressionRatio } from "@/lib/db/compression";
 
@@ -1055,10 +1056,24 @@ export async function handleChatCore({
   const reasoningCacheScope = reasoningReplaySessionKey
     ? `api-key:${String(apiKeyInfo?.id ?? "local")}\x1f${String(reasoningReplaySessionKey)}`
     : null;
+  // Set by the Gemini pre-dispatch budget guard below (once the executor is
+  // actually about to be called); settled exactly once, here, on whichever
+  // outcome branch this request takes.
+  let geminiReservation: GeminiReservationHandle | null = null;
   // persistAttemptLogs extracted to chatCore/attemptLogging.ts (#3501); bind the per-request context
   // once so the 16 call sites keep passing only the per-attempt args (byte-identical).
-  const persistAttemptLogs = (args: PersistAttemptLogsArgs) =>
-    persistAttemptLogsFor(args, {
+  const persistAttemptLogs = (args: PersistAttemptLogsArgs) => {
+    if (geminiReservation) {
+      const reservation = geminiReservation;
+      geminiReservation = null;
+      const tokensBag =
+        args.tokens && typeof args.tokens === "object"
+          ? (args.tokens as Record<string, unknown>)
+          : null;
+      const promptTokens = typeof tokensBag?.prompt_tokens === "number" ? tokensBag.prompt_tokens : undefined;
+      settleGeminiRequest(reservation, { upstreamStatus: args.status, tokens: promptTokens });
+    }
+    return persistAttemptLogsFor(args, {
       traceId,
       provider,
       connectionId,
@@ -1096,6 +1111,7 @@ export async function handleChatCore({
       // transcript was redacted. false for every non-video request.
       videoContentRemoved: videoBridgeObserved,
     });
+  };
 
   // Primary path: merge client model id + alias target so config on either key applies; resolved
   // id wins on same header name. T5 family fallback uses only (nextModel, resolveModelAlias(next))
@@ -3272,11 +3288,6 @@ export async function handleChatCore({
                 });
               }
 
-              // Track Gemini RPM + RPD request counts for 429 classification
-              if (provider === "gemini") {
-                incrementRequestCount(modelToCall);
-              }
-
               updatePendingScope(pendingScope, {
                 stage: "provider_response_started",
               });
@@ -3642,22 +3653,28 @@ export async function handleChatCore({
     }
   }
 
-  // ── Gemini pre-dispatch TPM / RPM guard ──────────────────────────────────
-  // Avoids guaranteed upstream 429 by checking local sliding-window counters
-  // before dispatch. Fail-open: counter errors → allow through.
+  // ── Gemini pre-dispatch RPM / TPM / RPD budget guard ─────────────────────
+  // Avoids a guaranteed upstream 429 by checking the per-connection ledger
+  // before dispatch. Fail-open: ledger errors → allow through. The
+  // reservation this makes is settled exactly once, in persistAttemptLogs
+  // above (see `geminiReservation`).
   if (provider === "gemini") {
     try {
-      if (isTpmExhausted(effectiveModel)) {
+      const budgetBlock = getGeminiBudgetBlock(connectionId, effectiveModel, Date.now());
+      if (budgetBlock) {
         trackPendingRequest(model, provider, connectionId, false);
         return createErrorResult(
           HTTP_STATUS.RATE_LIMITED,
-          `Gemini TPM rate limit reached for ${effectiveModel}. Please try again later.`,
+          `Gemini ${budgetBlock.window.toUpperCase()} budget exhausted for ${effectiveModel}. Please try again later.`,
           null,
-          "GEMINI_TPM_EXHAUSTED"
+          `GEMINI_${budgetBlock.window.toUpperCase()}_EXHAUSTED`
         );
       }
+      geminiReservation = reserveGeminiRequest(connectionId, effectiveModel, Date.now());
     } catch (err) {
-      log?.warn?.("GEMINI_RATE_LIMIT", "Pre-dispatch TPM check failed; allowing request", { err });
+      log?.warn?.("GEMINI_RATE_LIMIT", "Pre-dispatch budget check failed; allowing request", {
+        err,
+      });
     }
   }
 
@@ -5323,13 +5340,6 @@ export async function handleChatCore({
       const cacheUsageLogMeta = buildCacheUsageLogMeta(usage);
       if (usage && typeof usage === "object") {
         attachCompressionUsageReceiptAfterAnalytics(usage as Record<string, unknown>, "provider");
-        if (provider === "gemini") {
-          const promptTokens =
-            typeof (usage as Record<string, unknown>).prompt_tokens === "number"
-              ? ((usage as Record<string, unknown>).prompt_tokens as number)
-              : 0;
-          if (promptTokens > 0) incrementTokenUsage(model, promptTokens);
-        }
       }
       recordContextEditingTelemetryHook({
         contextEditingEnabled,
@@ -5917,14 +5927,6 @@ export async function handleChatCore({
     // Track cache token metrics for streaming responses
     if (streamUsage && typeof streamUsage === "object") {
       attachCompressionUsageReceiptAfterAnalytics(streamUsage as Record<string, unknown>, "stream");
-      // Track Gemini token consumption for TPM rate-limit pre-check
-      if (provider === "gemini") {
-        const promptTokens =
-          typeof (streamUsage as Record<string, unknown>).prompt_tokens === "number"
-            ? ((streamUsage as Record<string, unknown>).prompt_tokens as number)
-            : 0;
-        if (promptTokens > 0) incrementTokenUsage(model, promptTokens);
-      }
     }
     recordStreamingUsageStats(streamUsage, {
       provider,

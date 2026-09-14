@@ -32,7 +32,7 @@ type ZonedParts = {
   second: number;
 };
 
-function zonedParts(ms: number, timeZone: string): ZonedParts {
+export function zonedParts(ms: number, timeZone: string): ZonedParts {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
@@ -68,7 +68,7 @@ function addCalendarDay(year: number, month: number, day: number): {
 }
 
 /** Convert wall-clock time in `timeZone` to epoch ms. */
-function zonedLocalToUtc(
+export function zonedLocalToUtc(
   year: number,
   month: number,
   day: number,

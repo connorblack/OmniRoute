@@ -55,9 +55,7 @@ import { persistAntigravityFamilyCooldownIfQuota } from "./antigravityFamilyCool
 import {
   classifyGeminiQuotaMetricFromText,
   msUntilGeminiDailyReset,
-  isRpdExhausted,
-  isRpmExhausted,
-  isTpmExhausted,
+  getGeminiBudgetBlock,
 } from "./geminiRateLimitTracker.ts";
 import { setConnectionRateLimitUntil } from "@/lib/db/providers";
 import {
@@ -660,7 +658,19 @@ export async function recordCoreOwnedAntigravityQuotaState({
   profileOverride?: ProviderProfile | null;
 }) {
   const profile = profileOverride ?? (await getRuntimeProviderProfile(provider));
-  const fallback = checkFallbackError(status, errorText, 0, model, provider, headers, profile);
+  const fallback = checkFallbackError(
+    status,
+    errorText,
+    0,
+    model,
+    provider,
+    headers,
+    profile,
+    undefined,
+    undefined,
+    undefined,
+    connectionId
+  );
   const lockout = recordModelLockoutFailure(
     provider,
     connectionId,
@@ -1148,11 +1158,22 @@ export function isModelLocked(
   model: string | null | undefined
 ): boolean {
   if (!model) return false;
-  return exactModelLock.isAnyKeyLocked(
-    modelLockouts,
-    cleanupModelLockKey,
-    getQueryableModelLockKeys(provider, connectionId, model)
-  );
+  if (
+    exactModelLock.isAnyKeyLocked(
+      modelLockouts,
+      cleanupModelLockKey,
+      getQueryableModelLockKeys(provider, connectionId, model)
+    )
+  ) {
+    return true;
+  }
+  // Derived, not written: a spent Gemini RPM/TPM/RPD budget locks the model
+  // without ever touching modelLockouts, so it stays truthful to the live
+  // ledger instead of a snapshot taken at failure time.
+  if (getCanonicalLockProvider(provider) === "gemini" && connectionId) {
+    return getGeminiBudgetBlock(connectionId, model, Date.now()) !== null;
+  }
+  return false;
 }
 
 /**
@@ -1169,13 +1190,30 @@ export function getModelLockoutInfo(
     cleanupModelLockKey,
     getQueryableModelLockKeys(provider, connectionId, model)
   );
-  if (!entry) return null;
-  return {
-    reason: entry.reason,
-    remainingMs: entry.until - Date.now(),
-    lockedAt: new Date(entry.lockedAt).toISOString(),
-    failureCount: entry.failureCount,
-  };
+  if (entry) {
+    return {
+      reason: entry.reason,
+      remainingMs: entry.until - Date.now(),
+      lockedAt: new Date(entry.lockedAt).toISOString(),
+      failureCount: entry.failureCount,
+    };
+  }
+  if (getCanonicalLockProvider(provider) === "gemini" && connectionId) {
+    const now = Date.now();
+    const budgetBlock = getGeminiBudgetBlock(connectionId, model, now);
+    if (budgetBlock) {
+      return {
+        reason:
+          budgetBlock.window === "rpd"
+            ? RateLimitReason.QUOTA_EXHAUSTED
+            : RateLimitReason.RATE_LIMIT_EXCEEDED,
+        remainingMs: budgetBlock.remainingMs,
+        lockedAt: new Date(now).toISOString(),
+        failureCount: 1,
+      };
+    }
+  }
+  return null;
 }
 
 export type ModelLockoutInfo = {
@@ -1761,6 +1799,10 @@ export function checkFallbackError(
     hour?: unknown;
     nowMs?: number;
   } | null,
+  // #gemini-per-model-budget: only present when the caller already has the
+  // dispatching connection in scope. Gates the per-connection ledger check
+  // below; callers that lack it fall back to text-only classification.
+  connectionId?: string | null,
 ): {
   shouldFallback: boolean;
   cooldownMs: number;
@@ -2030,12 +2072,13 @@ export function checkFallbackError(
     // Preference order:
     //  1. The upstream error text's own metric name (authoritative — it is
     //     Google's own signal, e.g. "...free_tier_input_token_count..." = TPM).
-    //     Required because the local per-model counters below only increment
-    //     on a SUCCESSFUL response; a request that gets rejected — especially
-    //     the first of several concurrent requests racing to trip the same
-    //     per-minute limit — never contributes to the counter, so it can read
-    //     0 at the exact moment it needs to report exhaustion.
-    //  2. Local per-model counters, when the text names no metric.
+    //     Required because a rejected request settles as released (see
+    //     geminiRateLimitTracker's reserve/settle contract), so the
+    //     per-connection ledger can read as not-yet-exhausted at the exact
+    //     moment it needs to report otherwise — especially the first of
+    //     several concurrent requests racing to trip the same limit.
+    //  2. The per-connection ledger, when the text names no metric and a
+    //     connectionId is in scope.
     if (provider === "gemini" && status === HTTP_STATUS.RATE_LIMITED && _model) {
       const metricClass = classifyGeminiQuotaMetricFromText(errorStr);
       if (metricClass === "rpd") {
@@ -2055,14 +2098,16 @@ export function checkFallbackError(
       if (metricClass === "rpm" || metricClass === "tpm") {
         return buildRetryableFallback(RateLimitReason.RATE_LIMIT_EXCEEDED);
       }
-      if (isRpdExhausted(_model)) {
-        return buildRetryableFallback(RateLimitReason.QUOTA_EXHAUSTED);
-      }
-      if (isRpmExhausted(_model)) {
-        return buildRetryableFallback(RateLimitReason.RATE_LIMIT_EXCEEDED);
-      }
-      if (isTpmExhausted(_model)) {
-        return buildRetryableFallback(RateLimitReason.RATE_LIMIT_EXCEEDED);
+      // No connectionId in scope: the ledger is keyed per-connection, so there
+      // is nothing local left to consult — stay on Google's own metric name above.
+      if (connectionId) {
+        const budgetBlock = getGeminiBudgetBlock(connectionId, _model, Date.now());
+        if (budgetBlock?.window === "rpd") {
+          return buildRetryableFallback(RateLimitReason.QUOTA_EXHAUSTED);
+        }
+        if (budgetBlock?.window === "rpm" || budgetBlock?.window === "tpm") {
+          return buildRetryableFallback(RateLimitReason.RATE_LIMIT_EXCEEDED);
+        }
       }
     }
 

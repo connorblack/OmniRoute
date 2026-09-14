@@ -1,41 +1,39 @@
 /**
- * In-memory request/token counters for Gemini models — tracks both RPD (daily),
- * RPM (sliding 60s window), and TPM (sliding 60s token window) so that 429
- * responses can be classified as either quota_exhausted (RPD hit),
- * rate_limit_exceeded (RPM hit), or token_rate_exceeded (TPM hit).
+ * Per-(connection, canonical model) Gemini free-tier budget ledger.
  *
- * Gemini returns identical error bodies for all three, so we rely on
- * published per-model limits from geminiRateLimits.json to distinguish them.
+ * Tracks RPM (sliding 60s window), TPM (sliding 60s token window), and RPD
+ * (Pacific-midnight-resetting daily count) so a spent budget can be caught
+ * BEFORE dispatch instead of eating a guaranteed upstream 429.
  *
- * Counters are incremented on every Gemini request so that once usage
- * reaches the published limit, subsequent 429s are correctly classified.
+ * Reservation lifecycle: `reserveGeminiRequest` counts a dispatch toward
+ * RPM/RPD immediately (in-flight, before the upstream call resolves) so
+ * concurrent bursts cannot overshoot; `settleGeminiRequest` then either
+ * keeps it counted (2xx / non-429 4xx — Google billed it) or releases it
+ * (429 / 5xx — Google did not bill it) and folds in the token usage.
  */
 
-import geminiLimits from "../config/geminiRateLimits.json";
-import { nextDailyResetAtMs } from "./dailyQuotaReset.ts";
+import { createRequire } from "node:module";
+import geminiLimitsRaw from "../config/geminiRateLimits.json";
+import { nextDailyResetAtMs, zonedParts, zonedLocalToUtc } from "./dailyQuotaReset.ts";
 
-// ── RPD (daily) state ────────────────────────────────────────────────────────
+// This module loads well before better-sqlite3's native binding and the DB
+// file are guaranteed ready, and the seed read must stay synchronous (see
+// defaultSeedSource) — createRequire is the portable way to get a real,
+// synchronous `require` from an ES module regardless of the runtime's own
+// CJS/ESM interop.
+const require = createRequire(import.meta.url);
 
-interface DailyCount {
-  date: string; // "YYYY-MM-DD"
-  count: number;
-}
+const PACIFIC_TZ = "America/Los_Angeles";
+const WINDOW_MS = 60_000;
+// Defensive-only: not part of the spec. Bounds how long an unsettled
+// reservation can inflate RPM/RPD if a caller's outcome path never reaches
+// settleGeminiRequest (e.g. an early-return before the completion sink).
+const IN_FLIGHT_MAX_AGE_MS = 120_000;
 
-const dailyCounts = new Map<string, DailyCount>();
+type GeminiLimitEntry = { rpm: number; rpd: number; tpm: number };
+type GeminiRegistryEntry = GeminiLimitEntry | { aliasOf: string };
 
-// ── RPM (sliding 60s window) state ───────────────────────────────────────────
-
-const minuteWindows = new Map<string, number[]>();
-
-// ── TPM (sliding 60s token window) state ─────────────────────────────────────
-
-const tokenWindows = new Map<string, number[]>();
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function toDateKey(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const geminiLimits = geminiLimitsRaw as Record<string, GeminiRegistryEntry>;
 
 function stripModelPrefix(modelId: string): string {
   // Only strip the "gemini/" provider prefix, never "gemini-" which is part
@@ -43,145 +41,326 @@ function stripModelPrefix(modelId: string): string {
   return modelId.replace(/^gemini\//, "").trim();
 }
 
-function lookupValue(modelId: string, field: "rpm" | "rpd" | "tpm"): number {
-  if (!modelId) return 0;
-  const key = stripModelPrefix(modelId);
-  const entry = (geminiLimits as Record<string, Record<string, number>>)[key];
-  if (!entry) {
-    for (const [knownKey, knownEntry] of Object.entries(geminiLimits)) {
-      if (key.endsWith(knownKey) || knownKey.endsWith(key)) {
-        const val = knownEntry[field];
-        return typeof val === "number" && val > 0 ? val : 0;
-      }
+/** Resolve a model id to its registry key, following `aliasOf` to the canonical entry. */
+export function canonicalizeGeminiModel(modelId: string | null | undefined): string {
+  if (!modelId) return "";
+  let key = stripModelPrefix(modelId);
+  const seen = new Set<string>();
+  while (!seen.has(key)) {
+    seen.add(key);
+    const entry = geminiLimits[key];
+    if (entry && "aliasOf" in entry) {
+      key = entry.aliasOf;
+      continue;
     }
-    return 0;
+    break;
   }
-  const val = entry[field];
-  return typeof val === "number" && val > 0 ? val : 0;
+  return key;
 }
 
-// ── RPD exports ──────────────────────────────────────────────────────────────
+function lookupLimits(modelId: string | null | undefined): GeminiLimitEntry | null {
+  const key = canonicalizeGeminiModel(modelId);
+  if (!key) return null;
+  const entry = geminiLimits[key];
+  if (!entry || "aliasOf" in entry) return null;
+  return entry;
+}
 
 export function getModelRpd(modelId: string): number {
-  return lookupValue(modelId, "rpd");
+  return lookupLimits(modelId)?.rpd ?? -1;
 }
-
-export function incrementDailyRequestCount(modelId: string): void {
-  if (!modelId) return;
-  const key = stripModelPrefix(modelId);
-  const today = toDateKey();
-  const existing = dailyCounts.get(key);
-  if (existing && existing.date === today) {
-    existing.count++;
-  } else {
-    dailyCounts.set(key, { date: today, count: 1 });
-  }
-}
-
-export function getDailyRequestCount(modelId: string): number {
-  if (!modelId) return 0;
-  const key = stripModelPrefix(modelId);
-  const today = toDateKey();
-  const entry = dailyCounts.get(key);
-  if (entry && entry.date === today) return entry.count;
-  return 0;
-}
-
-export function isRpdExhausted(modelId: string): boolean {
-  const rpd = getModelRpd(modelId);
-  if (rpd <= 0) return false;
-  return getDailyRequestCount(modelId) >= rpd;
-}
-
-// ── RPM exports ──────────────────────────────────────────────────────────────
 
 export function getModelRpm(modelId: string): number {
-  return lookupValue(modelId, "rpm");
+  return lookupLimits(modelId)?.rpm ?? -1;
 }
-
-/** Prune timestamps older than 60 seconds from a model's window. */
-function pruneMinuteWindow(key: string): void {
-  const now = Date.now();
-  const cutoff = now - 60_000;
-  const timestamps = minuteWindows.get(key);
-  if (!timestamps) return;
-  let i = 0;
-  while (i < timestamps.length && timestamps[i] < cutoff) i++;
-  if (i > 0) {
-    minuteWindows.set(key, timestamps.slice(i));
-  }
-}
-
-function pruneTokenWindow(key: string): void {
-  const now = Date.now();
-  const cutoff = now - 60_000;
-  const entries = tokenWindows.get(key);
-  if (!entries) return;
-  let i = 0;
-  while (i < entries.length && entries[i] < cutoff) i += 2;
-  if (i > 0) {
-    tokenWindows.set(key, entries.slice(i));
-  }
-}
-
-export function incrementMinuteRequestCount(modelId: string): void {
-  if (!modelId) return;
-  const key = stripModelPrefix(modelId);
-  pruneMinuteWindow(key);
-  const timestamps = minuteWindows.get(key) ?? [];
-  timestamps.push(Date.now());
-  minuteWindows.set(key, timestamps);
-}
-
-export function getMinuteRequestCount(modelId: string): number {
-  if (!modelId) return 0;
-  const key = stripModelPrefix(modelId);
-  pruneMinuteWindow(key);
-  return minuteWindows.get(key)?.length ?? 0;
-}
-
-export function isRpmExhausted(modelId: string): boolean {
-  const rpm = getModelRpm(modelId);
-  if (rpm <= 0) return false;
-  return getMinuteRequestCount(modelId) >= rpm;
-}
-
-// ── TPM exports ──────────────────────────────────────────────────────────────
 
 export function getModelTpm(modelId: string): number {
-  return lookupValue(modelId, "tpm");
+  return lookupLimits(modelId)?.tpm ?? -1;
 }
 
-/**
- * Record prompt token consumption for a Gemini model.
- * Allows the per-minute token pre-check to avoid 429s.
- */
-export function incrementTokenUsage(modelId: string, promptTokens: number): void {
-  if (!modelId || !Number.isFinite(promptTokens) || promptTokens <= 0) return;
-  const key = stripModelPrefix(modelId);
-  pruneTokenWindow(key);
-  const entries = tokenWindows.get(key) ?? [];
-  entries.push(Date.now(), promptTokens);
-  tokenWindows.set(key, entries);
+// ── Ledger ───────────────────────────────────────────────────────────────────
+
+type LedgerEntry = {
+  requestTimes: number[];
+  tokenEvents: { at: number; n: number }[];
+  pacificDay: string;
+  dayRequests: number;
+  inFlight: Map<number, number>;
+};
+
+const ledger = new Map<string, LedgerEntry>();
+
+function ledgerKey(connectionId: string, canonicalModel: string): string {
+  return `${connectionId} ${canonicalModel}`;
 }
 
-export function getMinuteTokenCount(modelId: string): number {
-  if (!modelId) return 0;
-  const key = stripModelPrefix(modelId);
-  pruneTokenWindow(key);
-  const entries = tokenWindows.get(key);
-  if (!entries) return 0;
-  let total = 0;
-  for (let i = 1; i < entries.length; i += 2) {
-    total += entries[i];
+function pacificDayKey(nowMs: number): string {
+  const p = zonedParts(nowMs, PACIFIC_TZ);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+function currentPacificMidnightMs(nowMs: number): number {
+  const p = zonedParts(nowMs, PACIFIC_TZ);
+  return zonedLocalToUtc(p.year, p.month, p.day, 0, 0, 0, PACIFIC_TZ);
+}
+
+function rollDayIfNeeded(entry: LedgerEntry, nowMs: number): void {
+  const day = pacificDayKey(nowMs);
+  if (entry.pacificDay !== day) {
+    entry.pacificDay = day;
+    entry.dayRequests = 0;
   }
-  return total;
 }
 
-export function isTpmExhausted(modelId: string): boolean {
-  const tpm = getModelTpm(modelId);
-  if (tpm <= 0) return false;
-  return getMinuteTokenCount(modelId) >= tpm;
+function pruneEntry(entry: LedgerEntry, nowMs: number): void {
+  const windowCutoff = nowMs - WINDOW_MS;
+  if (entry.requestTimes.length > 0) {
+    entry.requestTimes = entry.requestTimes.filter((t) => t >= windowCutoff);
+  }
+  if (entry.tokenEvents.length > 0) {
+    entry.tokenEvents = entry.tokenEvents.filter((e) => e.at >= windowCutoff);
+  }
+  if (entry.inFlight.size > 0) {
+    const inFlightCutoff = nowMs - IN_FLIGHT_MAX_AGE_MS;
+    for (const [id, at] of entry.inFlight) {
+      if (at < inFlightCutoff) entry.inFlight.delete(id);
+    }
+  }
+  rollDayIfNeeded(entry, nowMs);
+}
+
+function ensureEntry(connectionId: string, canonicalModel: string, nowMs: number): LedgerEntry {
+  ensureSeeded(nowMs);
+  const key = ledgerKey(connectionId, canonicalModel);
+  let entry = ledger.get(key);
+  if (!entry) {
+    entry = {
+      requestTimes: [],
+      tokenEvents: [],
+      pacificDay: pacificDayKey(nowMs),
+      dayRequests: 0,
+      inFlight: new Map(),
+    };
+    ledger.set(key, entry);
+  }
+  pruneEntry(entry, nowMs);
+  return entry;
+}
+
+/** 429/5xx are never billed by Google; everything else (2xx, other 4xx) is. */
+function isBilledStatus(status: number): boolean {
+  if (status === 429) return false;
+  if (status >= 500) return false;
+  return true;
+}
+
+// ── Rehydration seam ─────────────────────────────────────────────────────────
+
+export type GeminiCallLogSeedRow = {
+  connectionId: string;
+  model: string;
+  status: number;
+  timestampMs: number;
+  tokensIn: number;
+  tokensOut: number;
+};
+
+export type GeminiLedgerSeedSource = (sincePacificMidnightMs: number) => GeminiCallLogSeedRow[];
+
+function defaultSeedSource(sincePacificMidnightMs: number): GeminiCallLogSeedRow[] {
+  try {
+    // Deferred require: this module loads at process start (imported by
+    // accountFallback.ts/chatCore.ts), well before better-sqlite3's native
+    // binding and the DB file are guaranteed ready.
+    const { getDbInstance } = require("../../src/lib/db/core");
+    const db = getDbInstance();
+    const rows = db
+      .prepare(
+        `SELECT connection_id, model, status, timestamp, tokens_in, tokens_out
+         FROM call_logs
+         WHERE provider = 'gemini' AND connection_id IS NOT NULL AND timestamp >= ?`
+      )
+      .all(new Date(sincePacificMidnightMs).toISOString()) as Array<{
+      connection_id: string;
+      model: string | null;
+      status: number | null;
+      timestamp: string;
+      tokens_in: number | null;
+      tokens_out: number | null;
+    }>;
+    return rows
+      .filter((r) => typeof r.model === "string" && r.model.length > 0)
+      .map((r) => ({
+        connectionId: r.connection_id,
+        model: r.model as string,
+        status: typeof r.status === "number" ? r.status : 0,
+        timestampMs: Date.parse(r.timestamp),
+        tokensIn: r.tokens_in ?? 0,
+        tokensOut: r.tokens_out ?? 0,
+      }));
+  } catch (err) {
+    console.warn(
+      "[geminiRateLimitTracker] ledger rehydration seed failed; starting with an empty ledger",
+      err
+    );
+    return [];
+  }
+}
+
+let seedSource: GeminiLedgerSeedSource = defaultSeedSource;
+let seeded = false;
+
+/** Test-only seam: inject a fake call_logs source, or reset to the SQLite default. */
+export function setGeminiLedgerSeedSourceForTests(fn: GeminiLedgerSeedSource | null): void {
+  seedSource = fn ?? defaultSeedSource;
+}
+
+function ensureSeeded(nowMs: number): void {
+  if (seeded) return;
+  seeded = true;
+  const rpmCutoff = nowMs - WINDOW_MS;
+  let rows: GeminiCallLogSeedRow[];
+  try {
+    rows = seedSource(currentPacificMidnightMs(nowMs));
+  } catch (err) {
+    console.warn(
+      "[geminiRateLimitTracker] ledger rehydration seed threw; starting with an empty ledger",
+      err
+    );
+    return;
+  }
+  for (const row of rows) {
+    if (!row.connectionId) continue;
+    const canonicalModel = canonicalizeGeminiModel(row.model);
+    if (!canonicalModel) continue;
+    if (!isBilledStatus(row.status)) continue;
+    const key = ledgerKey(row.connectionId, canonicalModel);
+    let entry = ledger.get(key);
+    if (!entry) {
+      entry = {
+        requestTimes: [],
+        tokenEvents: [],
+        pacificDay: pacificDayKey(nowMs),
+        dayRequests: 0,
+        inFlight: new Map(),
+      };
+      ledger.set(key, entry);
+    }
+    entry.dayRequests += 1;
+    if (row.timestampMs >= rpmCutoff) {
+      entry.requestTimes.push(row.timestampMs);
+      const tokens = (row.tokensIn || 0) + (row.tokensOut || 0);
+      if (tokens > 0) entry.tokenEvents.push({ at: row.timestampMs, n: tokens });
+    }
+  }
+}
+
+/** Test-only: drop the ledger, the seed-once latch, and any injected seed source. */
+export function resetGeminiBudgetLedgerForTests(): void {
+  ledger.clear();
+  seeded = false;
+  seedSource = defaultSeedSource;
+}
+
+// ── Reserve / settle ─────────────────────────────────────────────────────────
+
+export type GeminiReservationHandle = {
+  connectionId: string;
+  canonicalModel: string;
+  reservationId: number;
+  reservedAt: number;
+};
+
+let nextReservationId = 1;
+
+export function reserveGeminiRequest(
+  connectionId: string,
+  model: string,
+  nowMs: number = Date.now()
+): GeminiReservationHandle {
+  const canonicalModel = canonicalizeGeminiModel(model);
+  const entry = ensureEntry(connectionId, canonicalModel, nowMs);
+  const reservationId = nextReservationId++;
+  entry.inFlight.set(reservationId, nowMs);
+  return { connectionId, canonicalModel, reservationId, reservedAt: nowMs };
+}
+
+export type GeminiSettleOutcome = {
+  upstreamStatus: number;
+  tokens?: number | null;
+};
+
+export function settleGeminiRequest(
+  handle: GeminiReservationHandle | null | undefined,
+  outcome: GeminiSettleOutcome,
+  nowMs: number = Date.now()
+): void {
+  if (!handle) return;
+  const entry = ledger.get(ledgerKey(handle.connectionId, handle.canonicalModel));
+  if (!entry) return;
+  entry.inFlight.delete(handle.reservationId);
+  if (!isBilledStatus(outcome.upstreamStatus)) return;
+  rollDayIfNeeded(entry, nowMs);
+  entry.dayRequests += 1;
+  entry.requestTimes.push(handle.reservedAt);
+  const tokens = outcome.tokens;
+  if (typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0) {
+    entry.tokenEvents.push({ at: handle.reservedAt, n: tokens });
+  }
+}
+
+// ── Budget check (pre-dispatch gate) ────────────────────────────────────────
+
+export type GeminiBudgetBlock = {
+  window: "rpm" | "tpm" | "rpd";
+  remainingMs: number;
+};
+
+/** Google resets free-tier requests-per-day quotas at midnight Pacific time. */
+export function msUntilGeminiDailyReset(nowMs: number = Date.now()): number {
+  return nextDailyResetAtMs(PACIFIC_TZ, 0, nowMs) - nowMs;
+}
+
+export function getGeminiBudgetBlock(
+  connectionId: string | null | undefined,
+  model: string | null | undefined,
+  nowMs: number = Date.now()
+): GeminiBudgetBlock | null {
+  if (!connectionId || !model) return null;
+  const limits = lookupLimits(model);
+  if (!limits) return null;
+  const canonicalModel = canonicalizeGeminiModel(model);
+  const entry = ensureEntry(connectionId, canonicalModel, nowMs);
+  const resetMs = () => Math.max(0, msUntilGeminiDailyReset(nowMs));
+
+  // 0 = no free-tier access at all; never opens up within the day.
+  if (limits.rpd === 0) return { window: "rpd", remainingMs: resetMs() };
+  if (limits.rpm === 0) return { window: "rpm", remainingMs: resetMs() };
+  if (limits.tpm === 0) return { window: "tpm", remainingMs: resetMs() };
+
+  if (limits.rpd > 0) {
+    const used = entry.dayRequests + entry.inFlight.size;
+    if (used >= limits.rpd) return { window: "rpd", remainingMs: resetMs() };
+  }
+
+  if (limits.rpm > 0) {
+    const used = entry.requestTimes.length + entry.inFlight.size;
+    if (used >= limits.rpm) {
+      const times = [...entry.requestTimes, ...entry.inFlight.values()];
+      const oldest = Math.min(...times);
+      return { window: "rpm", remainingMs: Math.max(0, oldest + WINDOW_MS - nowMs) };
+    }
+  }
+
+  if (limits.tpm > 0) {
+    const used = entry.tokenEvents.reduce((sum, e) => sum + e.n, 0);
+    if (used >= limits.tpm) {
+      const oldest = Math.min(...entry.tokenEvents.map((e) => e.at));
+      return { window: "tpm", remainingMs: Math.max(0, oldest + WINDOW_MS - nowMs) };
+    }
+  }
+
+  return null;
 }
 
 // ── Text-based metric classification ─────────────────────────────────────────
@@ -193,16 +372,11 @@ export function isTpmExhausted(modelId: string): boolean {
  *    generate_content_free_tier_input_token_count, limit: 16000"
  *
  * This is authoritative (Google's own signal) and must be checked BEFORE the
- * local usage counters (isRpdExhausted/isRpmExhausted/isTpmExhausted): those
- * counters only increment via `incrementTokenUsage`/`incrementRequestCount`,
- * which fire AFTER a request completes successfully. A request that gets
- * REJECTED — especially the first of several concurrent requests that all
- * trip the same per-minute limit before any of them completes — never
- * contributes to the local counter, so `isTpmExhausted` reads 0 at the exact
- * moment it needs to return true, and the generic "quota exceeded" text
- * classifier (which matches ALL Gemini 429 bodies, per the file header)
- * mis-classifies a genuine TPM/RPM burst as QUOTA_EXHAUSTED (midnight lockout)
- * instead of RATE_LIMIT_EXCEEDED (short cooldown).
+ * local per-connection ledger: a request that gets REJECTED — especially the
+ * first of several concurrent requests that all trip the same per-minute
+ * limit before any of them completes — settles as released, so the ledger
+ * can read as not-yet-exhausted at the exact moment it needs to say
+ * otherwise.
  */
 export function classifyGeminiQuotaMetricFromText(
   errorText: string | null | undefined
@@ -227,32 +401,4 @@ export function classifyGeminiQuotaMetricFromText(
 function isDailyRequestLimit(modelId: string, limit: number): boolean {
   const rpd = getModelRpd(modelId);
   return rpd > 0 && limit === rpd && rpd !== getModelRpm(modelId);
-}
-
-/** Google resets free-tier requests-per-day quotas at midnight Pacific time. */
-export function msUntilGeminiDailyReset(nowMs: number = Date.now()): number {
-  return nextDailyResetAtMs("America/Los_Angeles", 0, nowMs) - nowMs;
-}
-
-// ── Increment both (convenience) ─────────────────────────────────────────────
-
-/** Increment both daily and minute counters for a Gemini request. */
-export function incrementRequestCount(modelId: string): void {
-  incrementDailyRequestCount(modelId);
-  incrementMinuteRequestCount(modelId);
-}
-
-// ── Composite check ──────────────────────────────────────────────────────────
-
-/** Returns true if either RPM or TPM is exhausted for this model. */
-export function isMinuteRateExhausted(modelId: string): boolean {
-  return isRpmExhausted(modelId) || isTpmExhausted(modelId);
-}
-
-// ── Reset (testing) ──────────────────────────────────────────────────────────
-
-export function resetCounters(): void {
-  dailyCounts.clear();
-  minuteWindows.clear();
-  tokenWindows.clear();
 }
