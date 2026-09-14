@@ -70,8 +70,9 @@ export function classifyAttemptOutcomeSource(input: {
 }): AttemptOutcomeSource {
   if (input.status === 499) return "client";
   if (input.upstreamLifecycleStatus || input.upstreamRequestId) return "upstream";
+  if (input.status >= 200 && input.status < 300) return "upstream";
   if (normalize(input.transport || "") === "relay") return "relay";
-  return "local";
+  return "upstream";
 }
 
 export type UpstreamHeaderEvent = {
