@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-function response(body: unknown, status = 200) {
+function response(body: unknown, status = 200, extraHeaders: Record<string, string> = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
-    headers: new Headers({ "content-type": "application/json" }),
+    headers: new Headers({ "content-type": "application/json", ...extraHeaders }),
     json: async () => body,
     text: async () => JSON.stringify(body),
   };
@@ -58,8 +58,7 @@ test("friendly usage commands forward the selected remote target", async () => {
 test("friendly usage commands reject non-success HTTP responses", async () => {
   const originalFetch = globalThis.fetch;
   const originalExit = process.exit;
-  globalThis.fetch = (async () =>
-    response({ error: { message: "remote failed" } }, 503)) as typeof fetch;
+  globalThis.fetch = (async () => response({ error: { message: "remote failed" } }, 503)) as typeof fetch;
   process.exit = ((code?: number) => {
     throw Object.assign(new Error(`process.exit(${code})`), { exitCode: code });
   }) as typeof process.exit;
@@ -97,14 +96,24 @@ test("usage logs preserve the structured call-log contract", async () => {
     error: "capacity",
     tokens: { in: 10, out: 0, cacheRead: null, cacheWrite: null, reasoning: null },
   };
-  globalThis.fetch = (async () => response([call])) as typeof fetch;
+  let requestedUrl = "";
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    requestedUrl = String(url);
+    return response([call], 200, { "x-omniroute-next-cursor": "cursor-2" });
+  }) as typeof fetch;
   try {
     const { runUsageLogs } = await import("../../bin/cli/commands/usage.mjs");
     const stdout = await captureStdout(() =>
-      runUsageLogs({ limit: 2, search: "correlation-1" }, command())
+      runUsageLogs(
+        { limit: 2, search: "correlation-1", cursor: "cursor-1", includeActive: true },
+        command()
+      )
     );
-    const rows = JSON.parse(stdout);
-    assert.deepEqual(rows, [call]);
+    const page = JSON.parse(stdout);
+    assert.deepEqual(page, { items: [call], nextCursor: "cursor-2" });
+    const params = new URL(requestedUrl).searchParams;
+    assert.equal(params.get("cursor"), "cursor-1");
+    assert.equal(params.get("includeActive"), "1");
   } finally {
     globalThis.fetch = original;
   }
