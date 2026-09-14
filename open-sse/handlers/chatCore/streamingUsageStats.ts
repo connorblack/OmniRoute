@@ -14,6 +14,7 @@ import { saveRequestUsage } from "@/lib/usageDb";
 import { recordTokenUsage } from "../../services/tokenLimitCounter.ts";
 import { computeBillableTokens } from "./upstreamTimeouts.ts";
 import { type EffectiveServiceTier } from "./serviceTier.ts";
+import type { AttemptObservation } from "../../services/slowStartCooldown.ts";
 
 export type RecordStreamingUsageStatsContext = {
   provider: string | null | undefined;
@@ -28,10 +29,12 @@ export type RecordStreamingUsageStatsContext = {
   isCombo: boolean;
   comboStrategy: string | null | undefined;
   endpoint?: string | null | undefined;
+  attemptObservation?: AttemptObservation | null;
 };
 
 function persistStreamingUsageRow(usage: object, ctx: RecordStreamingUsageStatsContext): void {
-  const { provider, model, streamStatus, startTime, ttft, streamErrorCode } = ctx;
+  const { provider, model, streamStatus, startTime, ttft, streamErrorCode, attemptObservation } =
+    ctx;
   saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
@@ -40,6 +43,12 @@ function persistStreamingUsageRow(usage: object, ctx: RecordStreamingUsageStatsC
     success: streamStatus === 200,
     latencyMs: Date.now() - startTime,
     timeToFirstTokenMs: ttft,
+    upstreamHeadersMs: attemptObservation?.upstreamHeadersMs,
+    requestToHeadersMs: attemptObservation?.requestToHeadersMs,
+    outcomeSource: attemptObservation?.outcomeSource,
+    upstreamStatus: attemptObservation?.upstreamStatus ?? undefined,
+    upstreamRequestId: attemptObservation?.upstreamRequestId,
+    upstreamLifecycleStatus: attemptObservation?.upstreamLifecycleStatus,
     errorCode: streamStatus === 200 ? null : streamErrorCode || String(streamStatus),
     timestamp: new Date().toISOString(),
     connectionId: ctx.connectionId || undefined,

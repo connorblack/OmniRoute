@@ -121,6 +121,17 @@ type CallLogSummaryRow = {
   correlation_id?: string | null;
   model_pinned?: number | null;
   session_tag?: string | null;
+  upstream_headers_ms?: number | null;
+  request_to_headers_ms?: number | null;
+  first_upstream_byte_ms?: number | null;
+  first_useful_event_ms?: number | null;
+  first_content_ms?: number | null;
+  terminal_ms?: number | null;
+  ttft_ms?: number | null;
+  outcome_source?: string | null;
+  upstream_status?: number | null;
+  upstream_request_id?: string | null;
+  upstream_lifecycle_status?: string | null;
 };
 
 const RESOLVED_ACCOUNT_SQL = "COALESCE(NULLIF(pc.name, ''), NULLIF(pc.email, ''), cl.account)";
@@ -129,11 +140,6 @@ type LegacyInlineRow = {
   request_body: string | null;
   response_body: string | null;
   error: string | null;
-};
-
-type DeleteResult = {
-  deletedRows: number;
-  deletedArtifacts: number;
 };
 
 function generateLogId() {
@@ -432,6 +438,20 @@ function mapSummaryRow(row: CallLogSummaryRow) {
     correlationId: row.correlation_id || null,
     modelPinned: toNumber(row.model_pinned) === 1,
     sessionTag: row.session_tag || null,
+    upstreamHeadersMs: row.upstream_headers_ms != null ? toNumber(row.upstream_headers_ms) : null,
+    requestToHeadersMs:
+      row.request_to_headers_ms != null ? toNumber(row.request_to_headers_ms) : null,
+    firstUpstreamByteMs:
+      row.first_upstream_byte_ms != null ? toNumber(row.first_upstream_byte_ms) : null,
+    firstUsefulEventMs:
+      row.first_useful_event_ms != null ? toNumber(row.first_useful_event_ms) : null,
+    firstContentMs: row.first_content_ms != null ? toNumber(row.first_content_ms) : null,
+    terminalMs: row.terminal_ms != null ? toNumber(row.terminal_ms) : null,
+    ttftMs: row.ttft_ms != null ? toNumber(row.ttft_ms) : null,
+    outcomeSource: row.outcome_source || null,
+    upstreamStatus: row.upstream_status != null ? toNumber(row.upstream_status) : null,
+    upstreamRequestId: row.upstream_request_id || null,
+    upstreamLifecycleStatus: row.upstream_lifecycle_status || null,
   };
 }
 
@@ -556,6 +576,17 @@ async function saveCallLogOperation(entry: any): Promise<void> {
       correlationId: entry.correlationId || null,
       modelPinned: entry.modelPinned ? 1 : 0,
       sessionTag: entry.sessionTag || null,
+      upstreamHeadersMs: entry.upstreamHeadersMs ?? null,
+      requestToHeadersMs: entry.requestToHeadersMs ?? null,
+      firstUpstreamByteMs: entry.firstUpstreamByteMs ?? null,
+      firstUsefulEventMs: entry.firstUsefulEventMs ?? null,
+      firstContentMs: entry.firstContentMs ?? null,
+      terminalMs: entry.terminalMs ?? null,
+      ttftMs: entry.ttftMs ?? null,
+      outcomeSource: entry.outcomeSource || null,
+      upstreamStatus: entry.upstreamStatus ?? null,
+      upstreamRequestId: entry.upstreamRequestId || null,
+      upstreamLifecycleStatus: entry.upstreamLifecycleStatus || null,
       // OpenAI Responses API response id, when this attempt produced one --
       // indexed so a later request's `previous_response_id` can resolve
       // this row's artifact for OmniRoute-native continuation. See
@@ -615,7 +646,10 @@ async function saveCallLogOperation(entry: any): Promise<void> {
         artifact_relpath, artifact_size_bytes, artifact_sha256,
         has_request_body, has_response_body, has_pipeline_details, request_summary,
         correlation_id, model_pinned, session_tag, response_id, error_type,
-        video_content_removed
+        video_content_removed, upstream_headers_ms, request_to_headers_ms,
+        first_upstream_byte_ms, first_useful_event_ms, first_content_ms, terminal_ms,
+        ttft_ms, outcome_source, upstream_status, upstream_request_id,
+        upstream_lifecycle_status
       )
       VALUES (
         @id, @timestamp, @method, @path, @status, @model, @requestedModel, @provider,
@@ -627,7 +661,10 @@ async function saveCallLogOperation(entry: any): Promise<void> {
         @artifactRelPath, @artifactSizeBytes, @artifactSha256,
         @hasRequestBody, @hasResponseBody, @hasPipelineDetails, @requestSummary,
         @correlationId, @modelPinned, @sessionTag, @responseId, @errorType,
-        @videoContentRemoved
+        @videoContentRemoved, @upstreamHeadersMs, @requestToHeadersMs,
+        @firstUpstreamByteMs, @firstUsefulEventMs, @firstContentMs, @terminalMs,
+        @ttftMs, @outcomeSource, @upstreamStatus, @upstreamRequestId,
+        @upstreamLifecycleStatus
       )
     `
     );

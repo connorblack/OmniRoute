@@ -9,6 +9,7 @@
  */
 
 import { buildErrorBody } from "../../utils/error.ts";
+import type { AttemptObservation } from "../../services/slowStartCooldown.ts";
 
 export function projectFailureUsageErrorCode(opts: {
   statusCode: number;
@@ -66,6 +67,7 @@ export function buildFailureUsageRecord(opts: {
   latencyMs: number;
   endpoint?: string | null | undefined;
   aggregate?: FailureUsageAggregate | null;
+  attemptObservation?: AttemptObservation | null;
 }) {
   return {
     provider: opts.provider || "unknown",
@@ -80,7 +82,17 @@ export function buildFailureUsageRecord(opts: {
     status: String(opts.statusCode),
     success: false,
     latencyMs: opts.latencyMs,
-    timeToFirstTokenMs: 0,
+    timeToFirstTokenMs: opts.attemptObservation ? opts.attemptObservation.requestToHeadersMs : 0,
+    ...(opts.attemptObservation
+      ? {
+          upstreamHeadersMs: opts.attemptObservation.upstreamHeadersMs,
+          requestToHeadersMs: opts.attemptObservation.requestToHeadersMs,
+          outcomeSource: opts.attemptObservation.outcomeSource,
+          upstreamStatus: opts.attemptObservation.upstreamStatus,
+          upstreamRequestId: opts.attemptObservation.upstreamRequestId,
+          upstreamLifecycleStatus: opts.attemptObservation.upstreamLifecycleStatus,
+        }
+      : {}),
     errorCode: opts.errorCode || String(opts.statusCode),
     timestamp: new Date().toISOString(),
     connectionId: opts.connectionId || undefined,

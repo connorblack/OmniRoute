@@ -10,6 +10,8 @@ import {
   classifyAttemptOutcomeSource,
   clearSlowStartState,
   getSlowStartStates,
+  observeTerminalWithoutHeaders,
+  observeUpstreamHeaders,
   recordSlowStartObservation,
 } from "../../open-sse/services/slowStartCooldown.ts";
 import { resolveModelLockoutSettings } from "../../src/lib/resilience/modelLockoutSettings.ts";
@@ -25,12 +27,13 @@ const policy = {
 };
 
 const observation = {
+  kind: "headers" as const,
   provider: "nvidia",
   connectionId: "key-3",
   model: "nemotron-3-ultra",
   upstreamHeadersMs: 90000,
   requestToHeadersMs: 92000,
-  status: 200,
+  upstreamStatus: 200,
   outcomeSource: "upstream" as const,
   upstreamLifecycleStatus: "fulfilled",
   upstreamRequestId: "nvcf-1",
@@ -39,6 +42,62 @@ const observation = {
 test.beforeEach(() => {
   clearSlowStartState();
   clearAllModelLockouts();
+});
+
+test("upstream header observation separates local admission from upstream wait", () => {
+  const result = observeUpstreamHeaders(
+    {
+      provider: "nvidia",
+      connectionId: "key-3",
+      model: "nemotron-3-ultra",
+      requestStartedAt: 1000,
+      upstreamStartedAt: 1500,
+      headersAt: 3500,
+      status: 200,
+      transport: "relay",
+      upstreamLifecycleStatus: "fulfilled",
+      upstreamRequestId: "nvcf-request",
+    },
+    { ...policy, enabled: false }
+  );
+  assert.deepEqual(result.observation, {
+    kind: "headers",
+    provider: "nvidia",
+    connectionId: "key-3",
+    model: "nemotron-3-ultra",
+    upstreamHeadersMs: 2000,
+    requestToHeadersMs: 2500,
+    upstreamStatus: 200,
+    outcomeSource: "upstream",
+    upstreamRequestId: "nvcf-request",
+    upstreamLifecycleStatus: "fulfilled",
+  });
+  assert.deepEqual(result.decision, { kind: "ignored", reason: "disabled" });
+});
+
+test("terminal relay failure cannot claim an upstream status or timing", () => {
+  assert.deepEqual(
+    observeTerminalWithoutHeaders({
+      provider: "nvidia",
+      connectionId: "key-3",
+      model: "nemotron-3-ultra",
+      terminalStatus: 502,
+      outcomeSource: "relay",
+    }),
+    {
+      kind: "terminal_without_headers",
+      provider: "nvidia",
+      connectionId: "key-3",
+      model: "nemotron-3-ultra",
+      upstreamHeadersMs: null,
+      requestToHeadersMs: null,
+      upstreamStatus: null,
+      terminalStatus: 502,
+      outcomeSource: "relay",
+      upstreamLifecycleStatus: null,
+      upstreamRequestId: null,
+    }
+  );
 });
 
 test("response provenance keeps NVIDIA, relay, and client outcomes separate", () => {
@@ -100,7 +159,7 @@ test("NVCF capacity errors count even when headers arrive before the latency thr
   const capacity = {
     ...observation,
     upstreamHeadersMs: 10000,
-    status: 503,
+    upstreamStatus: 503,
     upstreamLifecycleStatus: "errored",
   };
   recordSlowStartObservation(capacity, policy, 1000);

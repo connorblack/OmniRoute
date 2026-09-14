@@ -21,18 +21,31 @@ test("attempt timing migration adds durable routing signal columns", () => {
         (row) => row.name
       )
     );
-  const expected = [
+  const callLogExpected = [
     "upstream_headers_ms",
+    "request_to_headers_ms",
+    "first_upstream_byte_ms",
+    "first_useful_event_ms",
+    "first_content_ms",
+    "terminal_ms",
     "ttft_ms",
     "outcome_source",
     "upstream_status",
     "upstream_request_id",
     "upstream_lifecycle_status",
   ];
+  const usageExpected = [
+    "upstream_headers_ms",
+    "request_to_headers_ms",
+    "outcome_source",
+    "upstream_status",
+    "upstream_request_id",
+    "upstream_lifecycle_status",
+  ];
   const callLogColumns = columns("call_logs");
-  for (const name of expected) assert.ok(callLogColumns.has(name), `call_logs.${name}`);
+  for (const name of callLogExpected) assert.ok(callLogColumns.has(name), `call_logs.${name}`);
   const usageColumns = columns("usage_history");
-  for (const name of expected.filter((name) => name !== "ttft_ms")) {
+  for (const name of usageExpected) {
     assert.ok(usageColumns.has(name), `usage_history.${name}`);
   }
 

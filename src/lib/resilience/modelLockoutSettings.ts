@@ -1,5 +1,14 @@
 import { isAutomatedTestProcess } from "@/shared/utils/testProcess";
 
+export interface SlowStartCooldownSettings {
+  enabled: boolean;
+  providers: string[];
+  thresholdMs: number;
+  failuresBeforeCooldown: number;
+  observationWindowMs: number;
+  cooldownStepsMs: number[];
+}
+
 export interface ModelLockoutSettings {
   enabled: boolean;
   errorCodes: number[];
@@ -7,6 +16,7 @@ export interface ModelLockoutSettings {
   maxCooldownMs: number;
   maxBackoffSteps: number;
   useExponentialBackoff: boolean;
+  slowStart: SlowStartCooldownSettings;
 }
 
 export const DEFAULT_MODEL_LOCKOUT_SETTINGS: ModelLockoutSettings = {
@@ -16,6 +26,14 @@ export const DEFAULT_MODEL_LOCKOUT_SETTINGS: ModelLockoutSettings = {
   maxCooldownMs: 1_800_000,
   maxBackoffSteps: 10,
   useExponentialBackoff: true,
+  slowStart: {
+    enabled: false,
+    providers: ["nvidia"],
+    thresholdMs: 120_000,
+    failuresBeforeCooldown: 3,
+    observationWindowMs: 600_000,
+    cooldownStepsMs: [300_000, 600_000, 900_000],
+  },
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -53,11 +71,30 @@ function toNumberArray(value: unknown, fallback: number[]): number[] {
   return fallback;
 }
 
+function toProviderArray(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const providers = [...new Set(value.filter((item): item is string => typeof item === "string"))]
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return providers.length > 0 ? providers : fallback;
+}
+
+function toDurationArray(value: unknown, fallback: number[], isTest: boolean): number[] {
+  if (!Array.isArray(value)) return fallback;
+  const min = isTest ? 0 : 5_000;
+  const durations = value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item >= min && item <= 24 * 60 * 60 * 1000)
+    .map((item) => Math.trunc(item));
+  return durations.length > 0 ? durations : fallback;
+}
+
 export function resolveModelLockoutSettings(
   settings: Record<string, unknown> | null | undefined
 ): ModelLockoutSettings {
   const record = asRecord(settings);
   const raw = asRecord(record.modelLockout);
+  const rawSlowStart = asRecord(raw.slowStart);
   const isTest = isAutomatedTestProcess();
 
   const baseCooldownMs = toInteger(
@@ -90,5 +127,32 @@ export function resolveModelLockoutSettings(
       raw.useExponentialBackoff,
       DEFAULT_MODEL_LOCKOUT_SETTINGS.useExponentialBackoff
     ),
+    slowStart: {
+      enabled: toBoolean(rawSlowStart.enabled, DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.enabled),
+      providers: toProviderArray(
+        rawSlowStart.providers,
+        DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.providers
+      ),
+      thresholdMs: toInteger(
+        rawSlowStart.thresholdMs,
+        DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.thresholdMs,
+        { min: isTest ? 0 : 1_000, max: 60 * 60 * 1000 }
+      ),
+      failuresBeforeCooldown: toInteger(
+        rawSlowStart.failuresBeforeCooldown,
+        DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.failuresBeforeCooldown,
+        { min: 1, max: 100 }
+      ),
+      observationWindowMs: toInteger(
+        rawSlowStart.observationWindowMs,
+        DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.observationWindowMs,
+        { min: isTest ? 0 : 10_000, max: 24 * 60 * 60 * 1000 }
+      ),
+      cooldownStepsMs: toDurationArray(
+        rawSlowStart.cooldownStepsMs,
+        DEFAULT_MODEL_LOCKOUT_SETTINGS.slowStart.cooldownStepsMs,
+        isTest
+      ),
+    },
   };
 }

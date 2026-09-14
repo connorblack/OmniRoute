@@ -631,7 +631,14 @@ export async function getUsageDb(sinceIso?: string | null, limit?: number, curso
       status: toStringOrNull(r.status),
       success: toNumber(r.success) === 1,
       latencyMs: toNumber(r.latency_ms),
-      timeToFirstTokenMs: toNumber(r.ttft_ms),
+      timeToFirstTokenMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
+      upstreamHeadersMs: r.upstream_headers_ms != null ? toNumber(r.upstream_headers_ms) : null,
+      requestToHeadersMs:
+        r.request_to_headers_ms != null ? toNumber(r.request_to_headers_ms) : null,
+      outcomeSource: toStringOrNull(r.outcome_source),
+      upstreamStatus: r.upstream_status != null ? toNumber(r.upstream_status) : null,
+      upstreamRequestId: toStringOrNull(r.upstream_request_id),
+      upstreamLifecycleStatus: toStringOrNull(r.upstream_lifecycle_status),
       errorCode: toStringOrNull(r.error_code),
       timestamp: toStringOrNull(r.timestamp),
     };
@@ -670,7 +677,13 @@ export interface UsageEntry {
   status?: string | null;
   success?: boolean;
   latencyMs?: number;
-  timeToFirstTokenMs?: number;
+  timeToFirstTokenMs?: number | null;
+  upstreamHeadersMs?: number | null;
+  requestToHeadersMs?: number | null;
+  outcomeSource?: string | null;
+  upstreamStatus?: number | null;
+  upstreamRequestId?: string | null;
+  upstreamLifecycleStatus?: string | null;
   errorCode?: string | null;
   /** ISO timestamp; defaults to `new Date().toISOString()` when omitted. */
   timestamp?: string;
@@ -755,8 +768,10 @@ export async function saveRequestUsage(entry: UsageEntry) {
         INSERT INTO usage_history (provider, model, connection_id, account_key, account_label,
           account_label_priority, api_key_id, api_key_name, tokens_input, tokens_output,
           tokens_cache_read, tokens_cache_creation, tokens_reasoning, service_tier, status, success,
-          latency_ms, ttft_ms, error_code, combo_strategy, endpoint, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          latency_ms, ttft_ms, upstream_headers_ms, request_to_headers_ms,
+          outcome_source, upstream_status, upstream_request_id, upstream_lifecycle_status,
+          error_code, combo_strategy, endpoint, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
       ).run(
         entry.provider || null,
@@ -776,11 +791,25 @@ export async function saveRequestUsage(entry: UsageEntry) {
         entry.status || null,
         entry.success === false ? 0 : 1,
         Number.isFinite(Number(entry.latencyMs)) ? Number(entry.latencyMs) : 0,
-        Number.isFinite(Number(entry.timeToFirstTokenMs))
-          ? Number(entry.timeToFirstTokenMs)
-          : Number.isFinite(Number(entry.latencyMs))
-            ? Number(entry.latencyMs)
-            : 0,
+        entry.timeToFirstTokenMs === null
+          ? null
+          : Number.isFinite(Number(entry.timeToFirstTokenMs))
+            ? Number(entry.timeToFirstTokenMs)
+            : Number.isFinite(Number(entry.latencyMs))
+              ? Number(entry.latencyMs)
+              : 0,
+        entry.upstreamHeadersMs != null && Number.isFinite(Number(entry.upstreamHeadersMs))
+          ? Number(entry.upstreamHeadersMs)
+          : null,
+        entry.requestToHeadersMs != null && Number.isFinite(Number(entry.requestToHeadersMs))
+          ? Number(entry.requestToHeadersMs)
+          : null,
+        entry.outcomeSource || null,
+        entry.upstreamStatus != null && Number.isFinite(Number(entry.upstreamStatus))
+          ? Number(entry.upstreamStatus)
+          : null,
+        entry.upstreamRequestId || null,
+        entry.upstreamLifecycleStatus || null,
         entry.errorCode || null,
         entry.comboStrategy || entry.combo_strategy || null,
         entry.endpoint || null,
@@ -878,7 +907,14 @@ export async function getUsageHistory(filter: UsageHistoryFilter = {}) {
       status: toStringOrNull(r.status),
       success: toNumber(r.success) === 1,
       latencyMs: toNumber(r.latency_ms),
-      timeToFirstTokenMs: toNumber(r.ttft_ms),
+      timeToFirstTokenMs: r.ttft_ms != null ? toNumber(r.ttft_ms) : null,
+      upstreamHeadersMs: r.upstream_headers_ms != null ? toNumber(r.upstream_headers_ms) : null,
+      requestToHeadersMs:
+        r.request_to_headers_ms != null ? toNumber(r.request_to_headers_ms) : null,
+      outcomeSource: toStringOrNull(r.outcome_source),
+      upstreamStatus: r.upstream_status != null ? toNumber(r.upstream_status) : null,
+      upstreamRequestId: toStringOrNull(r.upstream_request_id),
+      upstreamLifecycleStatus: toStringOrNull(r.upstream_lifecycle_status),
       errorCode: toStringOrNull(r.error_code),
       timestamp: toStringOrNull(r.timestamp),
     };

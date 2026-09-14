@@ -71,4 +71,56 @@ test("attempt timing and provenance survive both persistence paths", async () =>
   assert.equal(usage.upstreamStatus, 503);
   assert.equal(usage.upstreamRequestId, "nvcf-test-request");
   assert.equal(usage.upstreamLifecycleStatus, "errored");
+
+  await saveCallLog({
+    id: "call-relay-timeout",
+    timestamp: "2026-09-14T01:01:00.000Z",
+    method: "POST",
+    path: "/v1/chat/completions",
+    status: 502,
+    provider: "nvidia",
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    connectionId: "connection-3",
+    duration: 25000,
+    terminalMs: 25000,
+    ttftMs: null,
+    upstreamHeadersMs: null,
+    requestToHeadersMs: null,
+    outcomeSource: "relay",
+    upstreamStatus: null,
+    upstreamRequestId: null,
+    upstreamLifecycleStatus: null,
+  });
+  const [relayCall] = await getCallLogs({ limit: 1 });
+  assert.equal(relayCall.id, "call-relay-timeout");
+  assert.equal(relayCall.ttftMs, null);
+  assert.equal(relayCall.upstreamHeadersMs, null);
+  assert.equal(relayCall.upstreamStatus, null);
+  assert.equal(relayCall.outcomeSource, "relay");
+
+  await saveRequestUsage({
+    provider: "nvidia",
+    model: "nvidia/nemotron-3-ultra-550b-a55b",
+    connectionId: "connection-3",
+    status: "502",
+    success: false,
+    latencyMs: 25000,
+    timeToFirstTokenMs: null,
+    timestamp: "2026-09-14T01:01:00.000Z",
+    upstreamHeadersMs: null,
+    requestToHeadersMs: null,
+    outcomeSource: "relay",
+    upstreamStatus: null,
+    upstreamRequestId: null,
+    upstreamLifecycleStatus: null,
+  });
+  const [relayUsage] = await getUsageHistory({
+    provider: "nvidia",
+    limit: 1,
+    sortOrder: "desc",
+  });
+  assert.equal(relayUsage.timeToFirstTokenMs, null);
+  assert.equal(relayUsage.upstreamHeadersMs, null);
+  assert.equal(relayUsage.upstreamStatus, null);
+  assert.equal(relayUsage.outcomeSource, "relay");
 });
