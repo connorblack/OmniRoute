@@ -242,6 +242,26 @@ export function getSlowStartStates(nowMs = Date.now()) {
     .sort((left, right) => right.lastObservationAt - left.lastObservationAt);
 }
 
+export function clearSlowStartScope(
+  provider: string,
+  connectionId: string,
+  model: string
+): boolean {
+  return states.delete(stateKey(normalize(provider), connectionId.trim(), normalize(model)));
+}
+
+export function clearSlowStartModel(provider: string, model: string): number {
+  const normalizedProvider = normalize(provider);
+  const normalizedModel = normalize(model);
+  let cleared = 0;
+  for (const [key, state] of states) {
+    if (state.provider !== normalizedProvider || state.model !== normalizedModel) continue;
+    states.delete(key);
+    cleared += 1;
+  }
+  return cleared;
+}
+
 export function clearSlowStartState(): void {
   states.clear();
 }

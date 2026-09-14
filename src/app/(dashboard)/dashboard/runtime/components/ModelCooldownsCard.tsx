@@ -6,18 +6,70 @@ import { Button, Card } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
 import { formatRemaining } from "@/shared/utils/formatRemaining";
 
-type CooldownItem = {
+type SlowStartStateItem = {
   provider: string;
+  connectionId: string;
+  accountLabel: string;
   model: string;
+  modelFamily: string | null;
+  slowCount: number;
+  escalationLevel: number;
+  cooldownUntil: number | null;
+  cooldownRemainingMs: number;
+  expiresAt: string | null;
+  lastObservationAt: number;
+  lastUpstreamHeadersMs: number | null;
+  lastStatus: number | null;
+  lastLifecycleStatus: string | null;
+  lastUpstreamRequestId: string | null;
+};
+
+type CooldownItem = {
+  scope: "connection-model" | "provider-model";
+  provider: string;
+  connectionId: string;
+  accountLabel: string;
+  model: string;
+  modelFamily: string | null;
   reason: string;
   remainingMs: number;
-  unavailableSince: string;
+  failureCount: number;
+  lockedAt: string;
+  until: number;
+  expiresAt: string | null;
+  slowStartState: SlowStartStateItem | null;
 };
+
+function scopeKey(provider: string, connectionId: string, model: string): string {
+  return `${provider}::${connectionId}::${model}`;
+}
+
+function formatAbsolute(timestamp: number, iso: string | null): string {
+  const formatted = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(new Date(timestamp));
+  return iso ? `${formatted} (${iso})` : formatted;
+}
+
+function slowStartDetails(state: SlowStartStateItem): string {
+  const parts = [`slow=${state.slowCount}`, `escalation=${state.escalationLevel}`];
+  if (state.lastUpstreamHeadersMs !== null) parts.push(`TTFB=${state.lastUpstreamHeadersMs}ms`);
+  if (state.lastStatus !== null) parts.push(`status=${state.lastStatus}`);
+  if (state.lastLifecycleStatus) parts.push(`lifecycle=${state.lastLifecycleStatus}`);
+  return parts.join(" · ");
+}
 
 export default function ModelCooldownsCard() {
   const t = useTranslations("settings");
   const notify = useNotificationStore();
   const [items, setItems] = useState<CooldownItem[]>([]);
+  const [slowStartStates, setSlowStartStates] = useState<SlowStartStateItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
@@ -27,6 +79,7 @@ export default function ModelCooldownsCard() {
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       setItems(Array.isArray(json.items) ? json.items : []);
+      setSlowStartStates(Array.isArray(json.slowStartStates) ? json.slowStartStates : []);
     } catch (error) {
       notify.error(error instanceof Error ? error.message : t("modelCooldownsLoadFailed"));
     } finally {
@@ -45,14 +98,14 @@ export default function ModelCooldownsCard() {
   }, [load]);
 
   const clearOne = useCallback(
-    async (provider: string, model: string) => {
-      const key = `${provider}::${model}`;
+    async (provider: string, connectionId: string | null, model: string) => {
+      const key = scopeKey(provider, connectionId ?? "*", model);
       setBusyKey(key);
       try {
         const res = await fetch("/api/resilience/model-cooldowns", {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, model }),
+          body: JSON.stringify({ provider, ...(connectionId ? { connectionId } : {}), model }),
         });
         const json = await res.json();
         if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
@@ -86,8 +139,16 @@ export default function ModelCooldownsCard() {
     }
   }, [load, notify, t]);
 
-  const hasItems = items.length > 0;
   const sorted = useMemo(() => [...items].sort((a, b) => b.remainingMs - a.remainingMs), [items]);
+  const visibleSlowStartStates = useMemo(() => {
+    const lockScopes = new Set(
+      items.map((item) => scopeKey(item.provider, item.connectionId, item.model))
+    );
+    return slowStartStates.filter(
+      (state) => !lockScopes.has(scopeKey(state.provider, state.connectionId, state.model))
+    );
+  }, [items, slowStartStates]);
+  const hasItems = sorted.length > 0 || visibleSlowStartStates.length > 0;
 
   return (
     <Card className="p-6">
@@ -117,35 +178,87 @@ export default function ModelCooldownsCard() {
         ) : !hasItems ? (
           <p className="text-sm text-text-muted">{t("modelCooldownsEmpty")}</p>
         ) : (
-          sorted.map((item) => {
-            const rowKey = `${item.provider}::${item.model}`;
-            return (
-              <div
-                key={rowKey}
-                className="rounded-lg border border-border bg-bg-subtle px-3 py-2 flex items-center justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-text-main truncate">
-                    {item.provider}/{item.model}
-                  </p>
-                  <p className="text-xs text-text-muted">
-                    {t("modelCooldownsReasonRemaining", {
-                      reason: item.reason,
-                      remaining: formatRemaining(item.remainingMs),
-                    })}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void clearOne(item.provider, item.model)}
-                  disabled={busyKey === rowKey}
+          <>
+            {sorted.map((item) => {
+              const rowKey = scopeKey(item.provider, item.connectionId, item.model);
+              const exactConnectionId =
+                item.scope === "connection-model" ? item.connectionId : null;
+              return (
+                <div
+                  key={rowKey}
+                  className="rounded-lg border border-border bg-bg-subtle px-3 py-2 flex items-center justify-between gap-3"
                 >
-                  {t("modelCooldownsReactivate")}
-                </Button>
-              </div>
-            );
-          })
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-main truncate">
+                      {item.provider}/{item.model}
+                    </p>
+                    <p className="text-xs text-text-muted truncate">
+                      {item.accountLabel} · {item.scope}
+                      {item.modelFamily ? ` · family:${item.modelFamily}` : ""}
+                    </p>
+                    <p className="text-xs text-text-muted">
+                      {t("modelCooldownsReasonRemaining", {
+                        reason: item.reason,
+                        remaining: formatRemaining(item.remainingMs),
+                      })}
+                      {` · ${formatAbsolute(item.until, item.expiresAt)}`}
+                    </p>
+                    {item.slowStartState ? (
+                      <p className="text-xs text-text-muted">
+                        slow_start · {slowStartDetails(item.slowStartState)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void clearOne(item.provider, exactConnectionId, item.model)}
+                    disabled={busyKey === rowKey}
+                  >
+                    {t("modelCooldownsReactivate")}
+                  </Button>
+                </div>
+              );
+            })}
+            {visibleSlowStartStates.map((state) => {
+              const rowKey = scopeKey(state.provider, state.connectionId, state.model);
+              return (
+                <div
+                  key={`slow-start::${rowKey}`}
+                  className="rounded-lg border border-border bg-bg-subtle px-3 py-2 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-main truncate">
+                      {state.provider}/{state.model}
+                    </p>
+                    <p className="text-xs text-text-muted truncate">
+                      {state.accountLabel} · connection-model
+                      {state.modelFamily ? ` · family:${state.modelFamily}` : ""}
+                    </p>
+                    <p className="text-xs text-text-muted">
+                      slow_start · {slowStartDetails(state)}
+                    </p>
+                    <p className="text-xs text-text-muted">
+                      {state.cooldownUntil !== null
+                        ? `${formatRemaining(state.cooldownRemainingMs)} · ${formatAbsolute(
+                            state.cooldownUntil,
+                            state.expiresAt
+                          )}`
+                        : formatAbsolute(state.lastObservationAt, null)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void clearOne(state.provider, state.connectionId, state.model)}
+                    disabled={busyKey === rowKey}
+                  >
+                    {t("modelCooldownsReactivate")}
+                  </Button>
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </Card>
