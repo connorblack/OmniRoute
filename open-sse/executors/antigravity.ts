@@ -1057,7 +1057,7 @@ export class AntigravityExecutor extends BaseExecutor {
     // Guard against indefinite hangs when the upstream sends headers but
     // stalls on the body.  Inherit the global FETCH_TIMEOUT_MS (default 600 s,
     // overridable via env) so reasoning-heavy models (gemini-3.1-pro-high on
-    // large prompts) are not killed by a hardcoded 120 s ceiling.
+    // large prompts) are not killed by a hardcoded 120 s ceiling. 0 disables it.
     const SSE_COLLECT_TIMEOUT_MS = FETCH_TIMEOUT_MS;
 
     const collect = async () => {
@@ -1070,20 +1070,23 @@ export class AntigravityExecutor extends BaseExecutor {
       };
       const partialLine = { value: "" };
       let timedOut = false;
-      const timeout = AbortSignal.timeout(SSE_COLLECT_TIMEOUT_MS);
+      const timeout =
+        SSE_COLLECT_TIMEOUT_MS > 0 ? AbortSignal.timeout(SSE_COLLECT_TIMEOUT_MS) : null;
       try {
         while (true) {
           if (signal?.aborted) throw new Error("Request aborted during SSE collection");
-          const { done, value } = await Promise.race([
-            reader.read(),
-            new Promise<never>((_, reject) =>
-              timeout.addEventListener(
-                "abort",
-                () => reject(new Error("SSE collection timed out")),
-                { once: true }
-              )
-            ),
-          ]);
+          const { done, value } = await (timeout
+            ? Promise.race([
+                reader.read(),
+                new Promise<never>((_, reject) =>
+                  timeout.addEventListener(
+                    "abort",
+                    () => reject(new Error("SSE collection timed out")),
+                    { once: true }
+                  )
+                ),
+              ])
+            : reader.read());
           if (done) break;
           processAntigravitySSEText(
             decoder.decode(value, { stream: true }),

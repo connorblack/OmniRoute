@@ -497,8 +497,11 @@ export class BlackboxWebExecutor extends BaseExecutor {
       selectedElement: null,
     };
 
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+    const timeoutSignal = FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
+    const combinedSignal =
+      signal && timeoutSignal
+        ? mergeAbortSignals(signal, timeoutSignal)
+        : (signal ?? timeoutSignal ?? undefined);
 
     let upstreamResponse: Response;
     try {
