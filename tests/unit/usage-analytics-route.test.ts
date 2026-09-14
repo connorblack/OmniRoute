@@ -424,6 +424,57 @@ test("GET /api/usage/analytics filters by range parameter", async () => {
   assert.equal(body.range, "1d");
 });
 
+test("GET /api/usage/analytics applies provider filter to every aggregate", async () => {
+  await seedAnalyticsData();
+
+  const response = await analyticsRoute.GET(
+    makeRequest("http://localhost/api/usage/analytics?range=1d&provider=openai")
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.summary.totalRequests, 10);
+  assert.ok(body.byModel.every((row: { provider: string }) => row.provider === "openai"));
+  assert.equal(body.byProvider.length, 1);
+  assert.equal(body.byProvider[0].provider, "OpenAI");
+  assert.ok(
+    body.dailyByModel.every((row: Record<string, unknown>) =>
+      Object.keys(row).every((key) => key === "date" || key.includes("gpt-4o"))
+    )
+  );
+});
+
+test("GET /api/usage/analytics reports combo cost with free and unpriced states", async () => {
+  await localDb.updatePricing({
+    nvidia: { ultra: { input: 0, output: 0 } },
+  });
+  const db = core.getDbInstance();
+  const timestamp = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO call_logs
+      (id, provider, model, combo_name, tokens_in, tokens_out, status, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run("free-call", "nvidia", "ultra", "free-combo", 100, 50, 200, timestamp);
+  db.prepare(
+    `INSERT INTO call_logs
+      (id, provider, model, combo_name, tokens_in, tokens_out, status, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run("unknown-call", "unknown-provider", "unknown-model", "unknown-combo", 100, 50, 200, timestamp);
+
+  const response = await analyticsRoute.GET(
+    makeRequest("http://localhost/api/usage/analytics?range=1d")
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  const free = body.byCombo.find((row: { combo: string }) => row.combo === "free-combo");
+  const unpriced = body.byCombo.find((row: { combo: string }) => row.combo === "unknown-combo");
+  assert.equal(free.pricingState, "free");
+  assert.equal(free.cost, 0);
+  assert.equal(unpriced.pricingState, "unpriced");
+  assert.equal(unpriced.cost, 0);
+});
+
 test("GET /api/usage/analytics includes byProvider array with cost data", async () => {
   await seedAnalyticsData();
 
