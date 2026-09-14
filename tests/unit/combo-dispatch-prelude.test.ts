@@ -37,6 +37,10 @@ const { invalidateDbCache } = await import("../../src/lib/db/readCache.ts");
 const { recordSessionModelUsage, getLastSessionModel } =
   await import("../../src/lib/db/contextHandoffs.ts");
 const semaphore = await import("../../open-sse/services/rateLimitSemaphore.ts");
+const { registerQuotaFetcher } = await import("../../open-sse/services/quotaPreflight.ts");
+const { getInflight, _clearInflightForTest } =
+  await import("../../open-sse/services/combo/quotaShareInflight.ts");
+const { _setSecureRandomFloatSource } = await import("../../src/shared/utils/secureRandom.ts");
 const core = await import("../../src/lib/db/core.ts");
 
 /**
@@ -731,6 +735,73 @@ test("tryPinnedModelDispatch: applies an executable child combo's account hedge 
     "fast"
   );
   assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
+});
+
+test("tryPinnedModelDispatch: applies an executable quota-weighted child's account policy", async () => {
+  const provider = "nestedpinnedquotaweighted";
+  const exhausted = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-quota-exhausted",
+    isActive: true,
+    apiKey: "test-exhausted",
+  });
+  const healthy = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-quota-healthy",
+    isActive: true,
+    apiKey: "test-healthy",
+  });
+  registerQuotaFetcher(provider, async (connectionId) =>
+    connectionId === exhausted.id
+      ? { limitReached: true, percentUsed: 1 }
+      : { limitReached: false, percentUsed: 0.2 }
+  );
+  invalidateDbCache();
+  _setSecureRandomFloatSource(() => 0);
+
+  const model = `${provider}/gemini-flash`;
+  const child: ComboInput = {
+    name: "nested-pinned-quota-child",
+    strategy: "quota-weighted",
+    models: [{ model }],
+    config: {},
+  };
+  const root: ComboInput = {
+    name: "nested-pinned-quota-root",
+    strategy: "priority",
+    models: [{ kind: "combo-ref", comboName: child.name }],
+    config: { nestedComboMode: "execute" },
+  };
+  const ctx = setup(root);
+  const calls: string[] = [];
+
+  try {
+    const result = await tryPinnedModelDispatch({
+      body: ctx.body,
+      combo: root,
+      pinnedModel: model,
+      allCombos: [root, child],
+      config: ctx.config,
+      strategy: "priority",
+      clientRequestedStream: false,
+      handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+        const connectionId = target && "connectionId" in target ? target.connectionId : null;
+        assert.equal(connectionId, healthy.id);
+        calls.push(connectionId);
+        return okResponse("healthy account");
+      },
+      log: ctx.log,
+    });
+
+    assert.ok(result.response);
+    assert.deepEqual(calls, [healthy.id]);
+    assert.equal(getInflight(healthy.id), 0);
+  } finally {
+    _setSecureRandomFloatSource(null);
+    _clearInflightForTest();
+  }
 });
 
 test("tryPinnedModelDispatch: bounds account hedges and honors the API key allowlist", async () => {
