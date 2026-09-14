@@ -235,10 +235,11 @@ export class DarioExecutor extends BaseExecutor {
     );
     mergeUpstreamExtraHeaders(headers, input.upstreamExtraHeaders);
 
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = input.signal
-      ? mergeAbortSignals(input.signal, timeoutSignal)
-      : timeoutSignal;
+    const timeoutSignal = FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
+    const combinedSignal =
+      input.signal && timeoutSignal
+        ? mergeAbortSignals(input.signal, timeoutSignal)
+        : (input.signal ?? timeoutSignal ?? undefined);
 
     input.log?.info?.("DARIO", `Dario → ${url} (model: ${input.model}, shape: ${shape})`);
 

@@ -139,7 +139,7 @@ export async function fetchGrokResetCredits(
       method: "POST",
       headers: grokRpcHeaders(accessToken),
       body: GRPC_WEB_EMPTY_REQUEST_FRAME,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined,
     });
     if (!response.ok) return null;
     const decoded = decodeGrokResetCreditsFrame(Buffer.from(await response.arrayBuffer()));
@@ -157,7 +157,7 @@ async function loadInventory(
     method: "POST",
     headers: grokRpcHeaders(accessToken),
     body: GRPC_WEB_EMPTY_REQUEST_FRAME,
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined,
   });
   if (!response.ok) {
     throw new GrokResetCreditError(
