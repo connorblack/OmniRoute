@@ -1276,12 +1276,17 @@ test("markAccountUnavailable applies a model-only lockout for Gemini 429 respons
     name: "gemini-model-limit",
   });
 
+  // gemini-2.5-pro carries a real free-tier budget of zero (no free access), so
+  // the per-connection Gemini budget guard (#gemini-per-model-budget) now
+  // classifies its 429s as quota_exhausted rather than a generic rate limit —
+  // use a model with a non-zero free-tier budget so this test still exercises
+  // the generic status-code rate-limit path it is named for.
   const result = await auth.markAccountUnavailable(
     connection.id,
     429,
     "too many requests",
     "gemini",
-    "gemini-2.5-pro"
+    "gemini-3.8-flash"
   );
   await flushWrites();
   const updated = await providersDb.getProviderConnectionById(connection.id);
