@@ -96,6 +96,20 @@ test("three slow upstream starts cool only that provider key and model", () => {
   assert.equal(isModelLocked("nvidia", "key-3", "nemotron-3-super"), false);
 });
 
+test("NVCF capacity errors count even when headers arrive before the latency threshold", () => {
+  const capacity = {
+    ...observation,
+    upstreamHeadersMs: 10000,
+    status: 503,
+    upstreamLifecycleStatus: "errored",
+  };
+  recordSlowStartObservation(capacity, policy, 1000);
+  recordSlowStartObservation(capacity, policy, 2000);
+  const decision = recordSlowStartObservation(capacity, policy, 3000);
+  assert.equal(decision.kind, "cooled");
+  assert.equal(isModelLocked("nvidia", "key-3", "nemotron-3-ultra"), true);
+});
+
 test("relay and client outcomes never train NVIDIA slow-start state", () => {
   for (const outcomeSource of ["relay", "client"] as const) {
     const decision = recordSlowStartObservation({ ...observation, outcomeSource }, policy, 1000);
