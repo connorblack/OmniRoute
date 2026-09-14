@@ -256,6 +256,7 @@ const RequestLoggerV2 = forwardRef<RequestLoggerV2Handle, { initialSelectedId?: 
           if (selectedAccount) params.set("account", selectedAccount);
           if (selectedApiKey) params.set("apiKey", selectedApiKey);
           if (correlationIdFilter) params.set("correlationId", correlationIdFilter);
+          params.set("includeActive", "1");
           params.set("limit", String(limit));
 
           const res = await fetch(`/api/usage/call-logs?${params}`);

@@ -1,5 +1,5 @@
 // AUTO-GENERATED from docs/openapi.yaml. Do not edit.
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { readFileSync } from "node:fs";
 
@@ -16,8 +16,8 @@ export function register_agent_skills(parent) {
       if (opts.category != null) qs.set("category", String(opts.category));
       if (opts.area != null) qs.set("area", String(opts.area));
       if (qs.toString()) url += "?" + qs.toString();
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-agent-skills-id-")
@@ -27,8 +27,8 @@ export function register_agent_skills(parent) {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/agent-skills/{id}";
       url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-agent-skills-id-raw")
@@ -38,8 +38,8 @@ export function register_agent_skills(parent) {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/agent-skills/{id}/raw";
       url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-agent-skills-coverage")
@@ -47,8 +47,8 @@ export function register_agent_skills(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/agent-skills/coverage";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-agent-skills-generate")
@@ -63,8 +63,8 @@ export function register_agent_skills(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
 }

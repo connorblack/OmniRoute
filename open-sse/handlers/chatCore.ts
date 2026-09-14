@@ -368,6 +368,12 @@ import {
   recordCoreOwnedAntigravityQuotaState,
   shouldDeferAntigravityQuotaStateToCaller,
 } from "../services/accountFallback.ts";
+import {
+  observeTerminalWithoutHeaders,
+  observeUpstreamHeaders,
+  type AttemptObservation,
+} from "../services/slowStartCooldown.ts";
+import { resolveModelLockoutSettings } from "@/lib/resilience/modelLockoutSettings";
 import { saveIdempotency } from "@/lib/idempotencyLayer";
 import {
   isModelUnavailableError,
@@ -657,6 +663,7 @@ export async function handleChatCore({
     payload?: unknown,
     maxDepth = 3
   ): EffectiveServiceTier | null => resolveReportedServiceTierFor(provider, payload, maxDepth);
+  let latestAttemptObservation: AttemptObservation | null = null;
   // Failure usage record building extracted to chatCore/failureUsage.ts (#3501); the handler keeps
   // the fire-and-forget save + computes latencyMs, so the call sites stay byte-identical.
   const persistFailureUsage = (
@@ -678,6 +685,7 @@ export async function handleChatCore({
         latencyMs: Date.now() - startTime,
         endpoint: endpointPath,
         aggregate: aggregate ?? undefined,
+        attemptObservation: latestAttemptObservation,
       })
     ).catch(() => {});
   };
@@ -1051,6 +1059,7 @@ export async function handleChatCore({
       requestedModel,
       credentials,
       startTime,
+      attemptObservation: latestAttemptObservation,
       body,
       sourceFormat,
       targetFormat,
@@ -3127,6 +3136,8 @@ export async function handleChatCore({
               stage: "waiting_rate_limit",
             });
 
+            latestAttemptObservation = null;
+            let upstreamStartedAt: number | undefined;
             try {
               trace("pre_rate_limit", { connectionId: attemptConnectionId });
               const rawExecutorResult = await withRateLimit(
@@ -3139,6 +3150,7 @@ export async function handleChatCore({
                     stage: "rate_limit_slot_acquired",
                   });
                   assertManagedLeaseFence(attemptConnectionId);
+                  upstreamStartedAt = Date.now();
                   return executeWithUpstreamStartTimeout({
                     executor,
                     provider,
@@ -3181,6 +3193,36 @@ export async function handleChatCore({
                 }
               );
               const res = normalizeExecutorResult(rawExecutorResult);
+              if (upstreamStartedAt !== undefined) {
+                const headersAt = Date.now();
+                const upstreamLifecycleStatus = res.response.headers.get("nvcf-status");
+                const upstreamRequestId = res.response.headers.get("nvcf-reqid");
+                const { observation, decision: slowStartDecision } = observeUpstreamHeaders(
+                  {
+                    provider: provider || "unknown",
+                    connectionId: attemptConnectionId ? String(attemptConnectionId) : "",
+                    model: modelToCall,
+                    requestStartedAt: startTime,
+                    upstreamStartedAt,
+                    headersAt,
+                    status: res.response.status,
+                    transport: res.transport,
+                    upstreamLifecycleStatus,
+                    upstreamRequestId,
+                  },
+                  resolveModelLockoutSettings(settings).slowStart
+                );
+                latestAttemptObservation = observation;
+                trace("upstream_headers", {
+                  ...latestAttemptObservation,
+                  slowStartDecision,
+                });
+                if (slowStartDecision.kind === "cooled") {
+                  log.warn(
+                    `[SLOW_START] Cooling ${provider}/${String(attemptConnectionId)}/${modelToCall} for ${slowStartDecision.cooldownMs}ms after repeated ${latestAttemptObservation.upstreamHeadersMs}ms upstream header waits`
+                  );
+                }
+              }
               trace("post_executor", { status: res?.response?.status });
 
               if (
@@ -4238,6 +4280,28 @@ export async function handleChatCore({
       const upstreamErrorCode =
         localRateLimitFailure?.code ??
         (isProxyUnreachableFailure ? "proxy_unreachable" : errorCode);
+      const isRelayTransportFailure =
+        upstreamErrorCode === "relay_timeout" ||
+        (error as { code?: unknown })?.code === "RELAY_TIMEOUT";
+      const terminalOutcomeSource = isRequestAborted
+        ? "client"
+        : isRelayTransportFailure
+          ? "relay"
+          : "local";
+      if (latestAttemptObservation === null) {
+        latestAttemptObservation = observeTerminalWithoutHeaders({
+          provider: provider || "unknown",
+          connectionId: String(getCurrentConnectionId() || connectionId || ""),
+          model: currentModel || model || requestedModel || "unknown",
+          terminalStatus: failureStatus,
+          outcomeSource: terminalOutcomeSource,
+        });
+      } else if (isRequestAborted) {
+        latestAttemptObservation = {
+          ...latestAttemptObservation,
+          outcomeSource: "client",
+        };
+      }
       // Tag our own deadline timeouts (fetch-start TimeoutError / body BodyTimeoutError,
       // both surfaced as a 504) as "upstream_timeout" so the cooldown layer can tell a
       // slow-but-not-failed request apart from a real provider 5xx. (Antigravity already
@@ -5280,6 +5344,7 @@ export async function handleChatCore({
         isCombo,
         comboStrategy,
         endpoint: endpointPath,
+        attemptObservation: latestAttemptObservation,
       });
 
       // #12150 P1b surface 3 (fix round 1): a video-bridge-observed request's
@@ -5856,6 +5921,7 @@ export async function handleChatCore({
       isCombo,
       comboStrategy,
       endpoint: endpointPath,
+      attemptObservation: latestAttemptObservation,
     });
 
     // Routing event (feedback foundation) — fire-and-forget, cheap, never blocks
@@ -5916,6 +5982,7 @@ export async function handleChatCore({
       claudeCacheMeta: claudePromptCacheLogMeta,
       claudeCacheUsageMeta: cacheUsageLogMeta,
       cacheSource: "upstream",
+      ttftMs: ttft,
     });
 
     recordStreamingCost({

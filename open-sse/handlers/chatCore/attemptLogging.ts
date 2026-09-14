@@ -20,6 +20,7 @@ import type { VideoBridgeLogRedactionEntry } from "@/lib/guardrails/videoBridge"
 import { FORMATS } from "../../translator/formats.ts";
 import { takeEarlyKeepaliveBytes } from "../../utils/earlyKeepaliveByteBuffer.ts";
 import { sanitizeErrorMessage } from "../../utils/error.ts";
+import type { AttemptObservation } from "../../services/slowStartCooldown.ts";
 import { cloneBoundedChatLogPayload, truncateForLog } from "./logTruncation.ts";
 import { attachLogMeta } from "./cacheUsageMeta.ts";
 
@@ -209,6 +210,7 @@ export type PersistAttemptLogsArgs = {
   claudeCacheMeta?: Record<string, unknown>;
   claudeCacheUsageMeta?: Record<string, unknown>;
   cacheSource?: "upstream" | "semantic";
+  ttftMs?: number | null;
 };
 
 export type PersistAttemptLogsContext = {
@@ -226,6 +228,7 @@ export type PersistAttemptLogsContext = {
   requestedModel: unknown;
   credentials: { connectionId?: string } | null | undefined;
   startTime: number;
+  attemptObservation?: AttemptObservation | null;
   body: unknown;
   sourceFormat: unknown;
   targetFormat: unknown;
@@ -350,6 +353,7 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     claudeCacheMeta,
     claudeCacheUsageMeta,
     cacheSource,
+    ttftMs,
   } = args;
   const {
     traceId,
@@ -364,6 +368,7 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     requestedModel,
     credentials,
     startTime,
+    attemptObservation,
     body,
     sourceFormat,
     targetFormat,
@@ -458,6 +463,7 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     }
   }
 
+  const elapsedMs = Date.now() - startTime;
   saveCallLog({
     id: pendingRequestId,
     method: "POST",
@@ -467,7 +473,18 @@ export function persistAttemptLogs(args: PersistAttemptLogsArgs, ctx: PersistAtt
     requestedModel,
     provider,
     connectionId: finalConnectionId || undefined,
-    duration: Date.now() - startTime,
+    duration: elapsedMs,
+    upstreamHeadersMs: attemptObservation?.upstreamHeadersMs ?? null,
+    requestToHeadersMs: attemptObservation?.requestToHeadersMs ?? null,
+    firstUpstreamByteMs: null,
+    firstUsefulEventMs: ttftMs ?? null,
+    firstContentMs: null,
+    terminalMs: elapsedMs,
+    ttftMs: ttftMs ?? attemptObservation?.requestToHeadersMs ?? null,
+    outcomeSource: attemptObservation?.outcomeSource ?? null,
+    upstreamStatus: attemptObservation?.upstreamStatus ?? null,
+    upstreamRequestId: attemptObservation?.upstreamRequestId ?? null,
+    upstreamLifecycleStatus: attemptObservation?.upstreamLifecycleStatus ?? null,
     tokens: tokens || {},
     requestBody: cloneBoundedChatLogPayload(
       attachLogMeta(

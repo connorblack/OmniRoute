@@ -37,6 +37,10 @@ const { invalidateDbCache } = await import("../../src/lib/db/readCache.ts");
 const { recordSessionModelUsage, getLastSessionModel } =
   await import("../../src/lib/db/contextHandoffs.ts");
 const semaphore = await import("../../open-sse/services/rateLimitSemaphore.ts");
+const { registerQuotaFetcher } = await import("../../open-sse/services/quotaPreflight.ts");
+const { getInflight, _clearInflightForTest } =
+  await import("../../open-sse/services/combo/quotaShareInflight.ts");
+const { _setSecureRandomFloatSource } = await import("../../src/shared/utils/secureRandom.ts");
 const core = await import("../../src/lib/db/core.ts");
 
 /**
@@ -493,6 +497,399 @@ test("tryPinnedModelDispatch: serves the pinned response when the pin is healthy
   );
 });
 
+test("tryPinnedModelDispatch: preserves the resolved account on an account-pinned target", async () => {
+  await seedHealthyPinProvider();
+  const connectionId = "account-pinned-connection";
+  const ctx = setup({
+    name: "account-pinned-combo",
+    strategy: "priority",
+    models: [{ model: `${HEALTHY_PROVIDER}/live`, connectionId }],
+    config: {},
+  });
+  let selectedConnection: string | null = null;
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: `${HEALTHY_PROVIDER}/live`,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      selectedConnection = target && "connectionId" in target ? target.connectionId : null;
+      return okResponse("pinned answer");
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(selectedConnection, connectionId);
+});
+
+test("tryPinnedModelDispatch: strict-random rotates the primary pinned account", async () => {
+  const provider = "strictpinnedaccount";
+  const first = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "strict-pinned-account-first",
+    isActive: true,
+    apiKey: "test-strict-pinned-account-first",
+  });
+  const second = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "strict-pinned-account-second",
+    isActive: true,
+    apiKey: "test-strict-pinned-account-second",
+  });
+  invalidateDbCache();
+
+  const model = `${provider}/deepseek`;
+  const ctx = setup({
+    name: "strict-pinned-account-combo",
+    strategy: "strict-random",
+    models: [{ model }],
+    config: { connectionAwareExpansion: true },
+  });
+  const selectedConnections: string[] = [];
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await tryPinnedModelDispatch({
+      body: ctx.body,
+      combo: ctx.combo,
+      pinnedModel: model,
+      allCombos: [ctx.combo],
+      config: ctx.config,
+      strategy: "strict-random",
+      clientRequestedStream: false,
+      handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+        const connectionId = target && "connectionId" in target ? target.connectionId : null;
+        assert.ok(connectionId);
+        selectedConnections.push(connectionId);
+        return okResponse("selected");
+      },
+      log: ctx.log,
+    });
+    assert.ok(result.response);
+  }
+
+  assert.deepEqual(new Set(selectedConnections), new Set([first.id, second.id]));
+});
+
+test("tryPinnedModelDispatch: hedges a pinned model across active accounts", async () => {
+  const provider = "pinnedhedge";
+  const first = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "pinned-hedge-slow",
+    isActive: true,
+    apiKey: "test-pinned-hedge-slow",
+  });
+  const second = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "pinned-hedge-fast",
+    isActive: true,
+    apiKey: "test-pinned-hedge-fast",
+  });
+  invalidateDbCache();
+
+  const model = `${provider}/deepseek`;
+  const ctx = setup({
+    name: "pinned-hedge-combo",
+    strategy: "random",
+    models: [{ model }],
+    config: {
+      connectionAwareExpansion: true,
+      zeroLatencyOptimizationsEnabled: true,
+      hedging: true,
+      hedgeDelayMs: 5,
+      maxParallelTargets: 2,
+    },
+  });
+  const calls: string[] = [];
+  let active = 0;
+  let maxActive = 0;
+  let slowAbortObserved = false;
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: model,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    strategy: "random",
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      const connectionId = target && "connectionId" in target ? target.connectionId : null;
+      assert.ok(connectionId);
+      calls.push(connectionId);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 100);
+            target.modelAbortSignal?.addEventListener(
+              "abort",
+              () => {
+                slowAbortObserved = true;
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          return okResponse("slow");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return okResponse("fast");
+      } finally {
+        active -= 1;
+      }
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
+  assert.equal(calls.length, 2);
+  assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
+  assert.equal(maxActive, 2);
+  assert.equal(slowAbortObserved, true);
+});
+
+test("tryPinnedModelDispatch: applies an executable child combo's account hedge policy", async () => {
+  const provider = "nestedpinnedhedge";
+  const first = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-hedge-slow",
+    isActive: true,
+    apiKey: "test-nested-pinned-hedge-slow",
+  });
+  const second = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-hedge-fast",
+    isActive: true,
+    apiKey: "test-nested-pinned-hedge-fast",
+  });
+  invalidateDbCache();
+
+  const model = `${provider}/deepseek`;
+  const child: ComboInput = {
+    name: "nested-pinned-hedge-child",
+    strategy: "random",
+    models: [{ model }],
+    config: {
+      connectionAwareExpansion: true,
+      zeroLatencyOptimizationsEnabled: true,
+      hedging: true,
+      hedgeDelayMs: 5,
+      maxParallelTargets: 2,
+    },
+  };
+  const root: ComboInput = {
+    name: "nested-pinned-hedge-root",
+    strategy: "priority",
+    models: [{ kind: "combo-ref", comboName: child.name }],
+    config: { nestedComboMode: "execute" },
+  };
+  const ctx = setup(root);
+  const calls: string[] = [];
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: root,
+    pinnedModel: model,
+    allCombos: [root, child],
+    config: ctx.config,
+    strategy: "priority",
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      const connectionId = target && "connectionId" in target ? target.connectionId : null;
+      assert.ok(connectionId);
+      calls.push(connectionId);
+      if (calls.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return okResponse("slow");
+      }
+      return okResponse("fast");
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
+  assert.deepEqual(new Set(calls), new Set([first.id, second.id]));
+});
+
+test("tryPinnedModelDispatch: applies an executable quota-weighted child's account policy", async () => {
+  const provider = "nestedpinnedquotaweighted";
+  const exhausted = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-quota-exhausted",
+    isActive: true,
+    apiKey: "test-exhausted",
+  });
+  const healthy = await createProviderConnection({
+    provider,
+    authType: "api-key",
+    name: "nested-pinned-quota-healthy",
+    isActive: true,
+    apiKey: "test-healthy",
+  });
+  registerQuotaFetcher(provider, async (connectionId) =>
+    connectionId === exhausted.id
+      ? { limitReached: true, percentUsed: 1 }
+      : { limitReached: false, percentUsed: 0.2 }
+  );
+  invalidateDbCache();
+  _setSecureRandomFloatSource(() => 0);
+
+  const model = `${provider}/gemini-flash`;
+  const child: ComboInput = {
+    name: "nested-pinned-quota-child",
+    strategy: "quota-weighted",
+    models: [{ model }],
+    config: {},
+  };
+  const root: ComboInput = {
+    name: "nested-pinned-quota-root",
+    strategy: "priority",
+    models: [{ kind: "combo-ref", comboName: child.name }],
+    config: { nestedComboMode: "execute" },
+  };
+  const ctx = setup(root);
+  const calls: string[] = [];
+
+  try {
+    const result = await tryPinnedModelDispatch({
+      body: ctx.body,
+      combo: root,
+      pinnedModel: model,
+      allCombos: [root, child],
+      config: ctx.config,
+      strategy: "priority",
+      clientRequestedStream: false,
+      handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+        const connectionId = target && "connectionId" in target ? target.connectionId : null;
+        assert.equal(connectionId, healthy.id);
+        calls.push(connectionId);
+        return okResponse("healthy account");
+      },
+      log: ctx.log,
+    });
+
+    assert.ok(result.response);
+    assert.deepEqual(calls, [healthy.id]);
+    assert.equal(getInflight(healthy.id), 0);
+  } finally {
+    _setSecureRandomFloatSource(null);
+    _clearInflightForTest();
+  }
+});
+
+test("tryPinnedModelDispatch: bounds account hedges and honors the API key allowlist", async () => {
+  const provider = "scopedpinnedhedge";
+  const connections = [];
+  for (let index = 0; index < 4; index += 1) {
+    connections.push(
+      await createProviderConnection({
+        provider,
+        authType: "api-key",
+        name: `scoped-pinned-hedge-${index}`,
+        isActive: true,
+        apiKey: `test-scoped-pinned-hedge-${index}`,
+      })
+    );
+  }
+  invalidateDbCache();
+
+  const allowedConnections = connections.slice(0, 3).map((connection) => connection.id);
+  const model = `${provider}/deepseek`;
+  const ctx = setup({
+    name: "scoped-pinned-hedge-combo",
+    strategy: "random",
+    models: [{ model }],
+    config: {
+      connectionAwareExpansion: true,
+      zeroLatencyOptimizationsEnabled: true,
+      hedging: true,
+      hedgeDelayMs: 5,
+      maxParallelTargets: 2,
+    },
+  });
+  const calls: string[] = [];
+  let active = 0;
+  let maxActive = 0;
+
+  const res = await tryPinnedModelDispatch({
+    body: ctx.body,
+    combo: ctx.combo,
+    pinnedModel: model,
+    allCombos: [ctx.combo],
+    config: ctx.config,
+    strategy: "random",
+    apiKeyAllowedConnections: allowedConnections,
+    clientRequestedStream: false,
+    handleSingleModelWithTimeout: async (_body, _modelStr, target) => {
+      const connectionId = target && "connectionId" in target ? target.connectionId : null;
+      assert.ok(connectionId);
+      calls.push(connectionId);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        if (calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 100);
+            target.modelAbortSignal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          return okResponse("slow");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return calls.length === 2 ? new Response("busy", { status: 503 }) : okResponse("fast");
+      } finally {
+        active -= 1;
+      }
+    },
+    log: ctx.log,
+  });
+
+  assert.ok(res.response);
+  assert.equal(
+    await res.response
+      .clone()
+      .json()
+      .then((body) => body.choices[0].message.content),
+    "fast"
+  );
+  assert.deepEqual(new Set(calls), new Set(allowedConnections));
+  assert.equal(calls.includes(connections[3].id), false);
+  assert.equal(maxActive, 2);
+});
+
 test("tryPinnedModelDispatch: expands the combo system_message template on the pinned path (#5501)", async () => {
   const ctx = setup({
     name: "pinned-combo",
@@ -789,8 +1186,16 @@ test("tryPinnedModelDispatch: a pinned round-robin attempt that finds the slot f
     null,
     "a full/timed-out slot must be treated as the pinned target being unavailable (Bug2 rule 2)"
   );
-  assert.equal(res.suppressPinRecording, true, "falls back per Bug1's rules — the pin must not move");
-  assert.equal(dispatched, false, "the pinned model must never be dispatched while its slot is unavailable");
+  assert.equal(
+    res.suppressPinRecording,
+    true,
+    "falls back per Bug1's rules — the pin must not move"
+  );
+  assert.equal(
+    dispatched,
+    false,
+    "the pinned model must never be dispatched while its slot is unavailable"
+  );
   assert.ok(
     ctx.records.some((r) => r.level === "warn" && r.msg.includes("queue full")),
     "the queue-full/timeout must be observable in the log"

@@ -1,5 +1,5 @@
 // AUTO-GENERATED from docs/openapi.yaml. Do not edit.
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { readFileSync } from "node:fs";
 
@@ -14,8 +14,8 @@ export function register_oauth(parent) {
       let url = "/api/oauth/{provider}/{action}";
       url = url.replace("{provider}", encodeURIComponent(opts.provider ?? ""));
       url = url.replace("{action}", encodeURIComponent(opts.action ?? ""));
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-oauth-cursor-auto-import")
@@ -23,8 +23,8 @@ export function register_oauth(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/cursor/auto-import";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-oauth-cursor-import")
@@ -32,13 +32,13 @@ export function register_oauth(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/cursor/import";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-oauth-cursor-import")
     .description("Import Cursor OAuth credentials")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/cursor/import";
@@ -48,8 +48,8 @@ export function register_oauth(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-oauth-kiro-auto-import")
@@ -57,8 +57,8 @@ export function register_oauth(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/kiro/auto-import";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-oauth-kiro-import")
@@ -66,13 +66,13 @@ export function register_oauth(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/kiro/import";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-oauth-kiro-import")
     .description("Import Kiro OAuth credentials")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/kiro/import";
@@ -82,8 +82,8 @@ export function register_oauth(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-oauth-kiro-social-authorize")
@@ -91,13 +91,13 @@ export function register_oauth(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/kiro/social-authorize";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-oauth-kiro-social-exchange")
     .description("Exchange Kiro social OAuth token")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/oauth/kiro/social-exchange";
@@ -107,8 +107,107 @@ export function register_oauth(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-codex-import-token")
+    .description("Import a Codex connection from a bare access token")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/codex/import-token";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-provider-paste-credentials")
+    .description("POST oauth › <provider> › paste credentials")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/{provider}/paste-credentials";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-oauth-cliproxy-import")
+    .description("GET oauth › cliproxy import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/cliproxy-import";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-cliproxy-import")
+    .description("POST oauth › cliproxy import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/cliproxy-import";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-codex-import")
+    .description("POST oauth › codex › import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/codex/import";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-cursor-login-cancel")
+    .description("POST oauth › cursor › login › cancel")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/cursor/login/cancel";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-cursor-login-poll")
+    .description("POST oauth › cursor › login › poll")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/cursor/login/poll";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-cursor-login-start")
+    .description("POST oauth › cursor › login › start")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/cursor/login/start";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-kiro-api-key")
+    .description("POST oauth › kiro › api key")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/kiro/api-key";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-oauth-trae-import")
+    .description("GET oauth › trae › import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/trae/import";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-oauth-trae-import")
+    .description("POST oauth › trae › import")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/oauth/trae/import";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
 }

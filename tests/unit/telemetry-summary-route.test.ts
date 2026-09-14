@@ -11,6 +11,27 @@ test.afterEach(() => {
   clearSessions();
 });
 
+test("telemetry summary exports the same recorded events as JSONL", async () => {
+  const telemetry = new RequestTelemetry("telemetry-export");
+  telemetry.startPhase("dispatch");
+  telemetry.endPhase();
+  recordTelemetry(telemetry);
+
+  const response = await GET(
+    new Request("http://localhost:20128/api/telemetry/summary?windowMs=600000&format=jsonl")
+  );
+  const text = await response.text();
+  const rows = text
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") || "", /ndjson/);
+  assert.ok(rows.some((row) => row.requestId === "telemetry-export"));
+});
+
 test("telemetry summary route includes totalRequests alias plus session/quota monitor signals", async () => {
   const telemetry = new RequestTelemetry("telemetry-route");
   telemetry.startPhase("parse");

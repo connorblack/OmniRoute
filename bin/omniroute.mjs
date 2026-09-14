@@ -50,13 +50,17 @@ if (isVersionFastPath(process.argv)) {
   process.exit(0);
 }
 
-// MCP stdio transport uses stdout exclusively for JSON-RPC messages. Redirect
-// console.log/warn to stderr before anything else runs — including the tsx/esm and
-// polyfill imports below, since those (and their transitive module graphs, e.g. DB
-// init) can themselves log during evaluation. Redirecting after those imports let
-// early output leak straight into the JSON-RPC stream and corrupt it client-side
-// (e.g. Claude Desktop: "Unexpected token 'D', \"[DB] Changi\"... is not valid JSON").
-if (process.argv.includes("--mcp")) {
+function usesMachineOutput(argv) {
+  if (argv.includes("--quiet") || argv.includes("-q")) return true;
+  const outputIndex = argv.indexOf("--output");
+  const output = outputIndex >= 0 ? argv[outputIndex + 1] : null;
+  if (["json", "jsonl", "csv"].includes(output)) return true;
+  return argv.some((arg) => /^--output=(?:json|jsonl|csv)$/.test(arg));
+}
+
+// Machine-readable modes reserve stdout for command data. Redirect startup and
+// transitive module logs before loading tsx, polyfills, or the command registry.
+if (process.argv.includes("--mcp") || usesMachineOutput(process.argv)) {
   const { Console } = await import("node:console");
   const stderrConsole = new Console({ stdout: process.stderr, stderr: process.stderr });
   console.log = stderrConsole.log.bind(stderrConsole);

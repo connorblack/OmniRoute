@@ -1,5 +1,5 @@
 // AUTO-GENERATED from docs/openapi.yaml. Do not edit.
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { readFileSync } from "node:fs";
 
@@ -10,8 +10,8 @@ export function register_pricing(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/pricing";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-pricing")
@@ -19,8 +19,8 @@ export function register_pricing(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/pricing";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-pricing-defaults")
@@ -28,8 +28,8 @@ export function register_pricing(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/pricing/defaults";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-pricing-models")
@@ -37,8 +37,35 @@ export function register_pricing(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/pricing/models";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("delete-api-pricing-sync")
+    .description("DELETE pricing › sync")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/pricing/sync";
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-pricing-sync")
+    .description("GET pricing › sync")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/pricing/sync";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-pricing-sync")
+    .description("POST pricing › sync")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/pricing/sync";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
 }

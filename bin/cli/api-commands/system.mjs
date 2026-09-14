@@ -1,5 +1,5 @@
 // AUTO-GENERATED from docs/openapi.yaml. Do not edit.
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { readFileSync } from "node:fs";
 
@@ -10,8 +10,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/v1";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-tags")
@@ -19,13 +19,13 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/tags";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-auth-login")
     .description("Authenticate user")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/auth/login";
@@ -35,8 +35,8 @@ export function register_system(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-auth-logout")
@@ -44,8 +44,32 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/auth/logout";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-auth-oidc-login")
+    .description("Start OIDC login for the dashboard admin gate")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/auth/oidc/login";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-auth-oidc-callback")
+    .description("Complete OIDC login for the dashboard admin gate")
+    .requiredOption("--code <code>", "")
+    .requiredOption("--state <state>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/auth/oidc/callback";
+      const qs = new URLSearchParams();
+      if (opts.code != null) qs.set("code", String(opts.code));
+      if (opts.state != null) qs.set("state", String(opts.state));
+      if (qs.toString()) url += "?" + qs.toString();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-init")
@@ -53,8 +77,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/init";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-restart")
@@ -62,8 +86,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/restart";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-shutdown")
@@ -71,8 +95,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/shutdown";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-db-backups")
@@ -80,8 +104,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/db-backups";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-db-backups")
@@ -89,8 +113,24 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/db-backups";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("patch-api-db-backups")
+    .description("Save database backup retention settings")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/db-backups";
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "PATCH", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-storage-health")
@@ -98,8 +138,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/storage/health";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-sync-cloud")
@@ -107,8 +147,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/sync/cloud";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-sync-initialize")
@@ -116,8 +156,166 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/sync/initialize";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-jobs")
+    .description("List registered background jobs")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/jobs";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-jobs-id-enable")
+    .description("Enable a background job")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/jobs/{id}/enable";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-jobs-id-disable")
+    .description("Disable a background job")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/jobs/{id}/disable";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-jobs-id-run-now")
+    .description("Trigger a background job")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/jobs/{id}/run-now";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-jobs-id-runs")
+    .description("Read background-job run history")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/jobs/{id}/runs";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-log-export-types")
+    .description("List log-export destination types")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/types";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-log-export-destinations")
+    .description("List log-export destinations")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-log-export-destinations")
+    .description("Create a log-export destination")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations";
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-log-export-destinations-id-")
+    .description("Read one log-export destination")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations/{id}";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("put-api-log-export-destinations-id-")
+    .description("Update a log-export destination")
+    .requiredOption("--id <id>", "")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations/{id}";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "PUT", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("delete-api-log-export-destinations-id-")
+    .description("Delete a log-export destination")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations/{id}";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-log-export-destinations-id-test")
+    .description("Test a log-export destination")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations/{id}/test";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-log-export-destinations-id-run")
+    .description("Run a log-export destination now")
+    .requiredOption("--id <id>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/destinations/{id}/run";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-log-export-status")
+    .description("Log-export scheduler status")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/log-export/status";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-resilience")
@@ -125,13 +323,13 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/resilience";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("patch-api-resilience")
     .description("Update resilience configuration")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/resilience";
@@ -141,8 +339,39 @@ export function register_system(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "PATCH", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "PATCH", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-resilience-connections")
+    .description("Inspect connection resilience state")
+    .option("--window-ms <windowMs>", "")
+    .option("--provider <provider>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/resilience/connections";
+      const qs = new URLSearchParams();
+      if (opts.windowMs != null) qs.set("windowMs", String(opts.windowMs));
+      if (opts.provider != null) qs.set("provider", String(opts.provider));
+      if (qs.toString()) url += "?" + qs.toString();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-telegram-update")
+    .description("Receive Telegram updates or Mini App messages")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/telegram/update";
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-resilience-reset")
@@ -150,8 +379,17 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/resilience/reset";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-health")
+    .description("Liveness probe")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/health";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-monitoring-health")
@@ -159,8 +397,17 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/monitoring/health";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-monitoring-compression")
+    .description("Get compression result-memo statistics")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/monitoring/compression";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-rate-limits")
@@ -168,8 +415,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/rate-limits";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-sessions")
@@ -177,8 +424,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/sessions";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-cache")
@@ -186,8 +433,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/cache";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("delete-api-cache")
@@ -195,8 +442,102 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/cache";
-      const res = await apiFetch(url, { method: "DELETE", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-modality-bridge-stats")
+    .description("Get Modality Bridge telemetry")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/stats";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-modality-bridge-video-runtime")
+    .description("Get Video Bridge runtime status")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/video/runtime";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-modality-bridge-video-extract")
+    .description("Extract bounded Video Bridge frames through the internal broker")
+    .requiredOption("--frames <frames>", "")
+    .option("--sampling-policy <samplingPolicy>", "Optional deterministic sampling policy. Scene-aware detection falls back to uniform sampling on detector failure.")
+    .option("--start <start>", "Optional focus-window start in seconds. The broker clamps it to the media duration.")
+    .option("--end <end>", "Optional focus-window end in seconds. It must be greater than the normalized start.")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/video/extract";
+      const qs = new URLSearchParams();
+      if (opts.frames != null) qs.set("frames", String(opts.frames));
+      if (opts.samplingPolicy != null) qs.set("samplingPolicy", String(opts.samplingPolicy));
+      if (opts.start != null) qs.set("start", String(opts.start));
+      if (opts.end != null) qs.set("end", String(opts.end));
+      if (qs.toString()) url += "?" + qs.toString();
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-modality-bridge-video-drilldown")
+    .description("Read a bounded Video Bridge drill-down slice")
+    .requiredOption("--session-id <sessionId>", "Canonical opaque ID without surrounding whitespace")
+    .requiredOption("--video-ref <videoRef>", "Canonical opaque reference without surrounding whitespace")
+    .option("--start <start>", "")
+    .option("--end <end>", "")
+    .option("--frames <frames>", "")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/video/drilldown";
+      const qs = new URLSearchParams();
+      if (opts.sessionId != null) qs.set("sessionId", String(opts.sessionId));
+      if (opts.videoRef != null) qs.set("videoRef", String(opts.videoRef));
+      if (opts.start != null) qs.set("start", String(opts.start));
+      if (opts.end != null) qs.set("end", String(opts.end));
+      if (opts.frames != null) qs.set("frames", String(opts.frames));
+      if (qs.toString()) url += "?" + qs.toString();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-modality-bridge-video-drilldown")
+    .description("Store a bounded Video Bridge drill-down result")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/video/drilldown";
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("delete-api-modality-bridge-video-drilldown")
+    .description("Delete a Video Bridge drill-down session")
+    .requiredOption("--session-id <sessionId>", "Canonical opaque ID without surrounding whitespace")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/modality-bridge/video/drilldown";
+      const qs = new URLSearchParams();
+      if (opts.sessionId != null) qs.set("sessionId", String(opts.sessionId));
+      if (qs.toString()) url += "?" + qs.toString();
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-cache-stats")
@@ -204,8 +545,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/cache/stats";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("delete-api-cache-stats")
@@ -213,8 +554,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/cache/stats";
-      const res = await apiFetch(url, { method: "DELETE", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-evals")
@@ -222,13 +563,13 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/evals";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-evals")
     .description("Run evaluation")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/evals";
@@ -238,8 +579,8 @@ export function register_system(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-evals-suite-id-")
@@ -249,8 +590,8 @@ export function register_system(parent) {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/evals/{suiteId}";
       url = url.replace("{suiteId}", encodeURIComponent(opts.suiteId ?? ""));
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-policies")
@@ -258,13 +599,13 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/policies";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-policies")
     .description("Create routing policy")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/policies";
@@ -274,8 +615,8 @@ export function register_system(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("delete-api-policies")
@@ -283,8 +624,8 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/policies";
-      const res = await apiFetch(url, { method: "DELETE", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-compliance-audit-log")
@@ -304,8 +645,8 @@ export function register_system(parent) {
       if (opts.limit != null) qs.set("limit", String(opts.limit));
       if (opts.offset != null) qs.set("offset", String(opts.offset));
       if (qs.toString()) url += "?" + qs.toString();
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-openapi-spec")
@@ -313,8 +654,60 @@ export function register_system(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/openapi/spec";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-openapi-try")
+    .description("Proxy an API Explorer request to an OmniRoute endpoint")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/openapi/try";
+      let body;
+      if (opts.body) {
+        body = opts.body.startsWith("@")
+          ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
+          : JSON.parse(opts.body);
+      }
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-system-env-repair")
+    .description("GET system › env › repair")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/system/env/repair";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-system-env-repair")
+    .description("POST system › env › repair")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/system/env/repair";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("get-api-system-version")
+    .description("GET system › version")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/system/version";
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
+      emit(data, gOpts);
+    });
+  tag.command("post-api-system-version")
+    .description("POST system › version")
+    .action(async (opts, cmd) => {
+      const gOpts = cmd.optsWithGlobals();
+      let url = "/api/system/version";
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
 }

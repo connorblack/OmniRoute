@@ -1,4 +1,4 @@
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { t } from "../i18n.mjs";
 
@@ -8,6 +8,7 @@ const costSchema = [
   { key: "tokensIn", header: "Tokens In", formatter: fmtTokens },
   { key: "tokensOut", header: "Tokens Out", formatter: fmtTokens },
   { key: "costUsd", header: "Cost (USD)", formatter: (v) => (v ? `$${v.toFixed(4)}` : "$0.0000") },
+  { key: "pricingState", header: "Pricing" },
   {
     key: "costPct",
     header: "% of Total",
@@ -39,23 +40,12 @@ export async function runCostCommand(opts, cmd) {
   const globalOpts = cmd.optsWithGlobals();
   const params = buildParams(opts);
 
+  const timeout = Number.parseInt(globalOpts.timeout, 10);
   const res = await apiFetch(`/api/usage/analytics?${params}`, {
-    timeout: globalOpts.timeout,
-    acceptNotOk: true,
+    ...globalOpts,
+    timeout: Number.isFinite(timeout) ? timeout : undefined,
   });
-
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      process.stderr.write(t("common.authRequired") + "\n");
-    } else if (res.status >= 500) {
-      process.stderr.write(t("common.serverOffline") + "\n");
-    } else {
-      process.stderr.write(t("common.error", { message: `HTTP ${res.status}` }) + "\n");
-    }
-    process.exit(res.exitCode ?? 1);
-  }
-
-  const data = await res.json();
+  const data = await readApiResponse(res);
   const rows = aggregateByGroup(data, opts.groupBy ?? "provider", opts.limit ?? 100);
 
   emit(rows, globalOpts, costSchema);
@@ -94,6 +84,7 @@ function aggregateByGroup(data, groupBy, limit) {
       tokensIn: toNum(r.totalTokensIn ?? r.tokensIn ?? r.promptTokens),
       tokensOut: toNum(r.totalTokensOut ?? r.tokensOut ?? r.completionTokens),
       costUsd,
+      pricingState: r.pricingState ?? null,
       costPct: totalCost > 0 ? (costUsd / totalCost) * 100 : 0,
     };
   });

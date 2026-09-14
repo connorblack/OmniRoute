@@ -1,5 +1,5 @@
 // AUTO-GENERATED from docs/openapi.yaml. Do not edit.
-import { apiFetch } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
 import { emit } from "../output.mjs";
 import { readFileSync } from "node:fs";
 
@@ -26,13 +26,13 @@ export function register_memory(parent) {
       if (opts.page != null) qs.set("page", String(opts.page));
       if (opts.offset != null) qs.set("offset", String(opts.offset));
       if (qs.toString()) url += "?" + qs.toString();
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-memory")
     .description("Create a memory entry")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory";
@@ -42,42 +42,48 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-memory-id-")
     .description("Get a single memory entry")
+    .requiredOption("--id <id>", "Memory UUID")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/{id}";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("put-api-memory-id-")
     .description("Update a memory entry")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--id <id>", "Memory UUID")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/{id}";
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
       let body;
       if (opts.body) {
         body = opts.body.startsWith("@")
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "PUT", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "PUT", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("delete-api-memory-id-")
     .description("Delete a memory entry")
+    .requiredOption("--id <id>", "Memory UUID")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/{id}";
-      const res = await apiFetch(url, { method: "DELETE", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      url = url.replace("{id}", encodeURIComponent(opts.id ?? ""));
+      const res = await apiFetch(url, { ...gOpts, method: "DELETE", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-memory-health")
@@ -85,13 +91,13 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/health";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-memory-retrieve-preview")
     .description("Dry-run memory retrieval (Playground)")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/retrieve-preview";
@@ -101,8 +107,8 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-memory-embedding-providers")
@@ -110,8 +116,8 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/embedding-providers";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-memory-engine-status")
@@ -119,13 +125,13 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/engine-status";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-memory-summarize")
     .description("Compact old memories")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/summarize";
@@ -135,13 +141,13 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-memory-reindex")
     .description("Trigger vector reindex")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/memory/reindex";
@@ -151,8 +157,8 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-settings-memory")
@@ -160,13 +166,13 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/memory";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("put-api-settings-memory")
     .description("Update memory settings")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/memory";
@@ -176,8 +182,8 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "PUT", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "PUT", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-settings-qdrant")
@@ -185,13 +191,13 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("put-api-settings-qdrant")
     .description("Update Qdrant settings")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant";
@@ -201,8 +207,8 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "PUT", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "PUT", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-settings-qdrant-health")
@@ -210,13 +216,13 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant/health";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-settings-qdrant-search")
     .description("Qdrant semantic search test")
-    .option("--body <jsonOrPath>", "JSON body or @path/to/file.json")
+    .requiredOption("--body <jsonOrPath>", "JSON body or @path/to/file.json")
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant/search";
@@ -226,8 +232,8 @@ export function register_memory(parent) {
           ? JSON.parse(readFileSync(opts.body.slice(1), "utf8"))
           : JSON.parse(opts.body);
       }
-      const res = await apiFetch(url, { method: "POST", body, baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", body, timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("post-api-settings-qdrant-cleanup")
@@ -235,8 +241,8 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant/cleanup";
-      const res = await apiFetch(url, { method: "POST", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "POST", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
   tag.command("get-api-settings-qdrant-embedding-models")
@@ -244,8 +250,8 @@ export function register_memory(parent) {
     .action(async (opts, cmd) => {
       const gOpts = cmd.optsWithGlobals();
       let url = "/api/settings/qdrant/embedding-models";
-      const res = await apiFetch(url, { method: "GET", baseUrl: gOpts.baseUrl, apiKey: gOpts.apiKey });
-      const data = res.ok ? await res.json() : await res.text();
+      const res = await apiFetch(url, { ...gOpts, method: "GET", timeout: Number.parseInt(gOpts.timeout, 10) });
+      const data = await readApiResponse(res);
       emit(data, gOpts);
     });
 }

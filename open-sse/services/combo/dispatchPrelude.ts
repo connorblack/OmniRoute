@@ -24,6 +24,8 @@ import { parseModel } from "../model.ts";
 import { handlePipelineChat, type PipelineStep } from "../pipeline.ts";
 import { resolveComboQueueDepth, resolveComboSetupConfig } from "../comboConfig.ts";
 import { clampComboDepth, clampGlobalAttempts, resolveDelayMs } from "./comboPredicates.ts";
+import { COMBO_HEDGE_CANCELLED_REASON } from "./comboAbortReasons.ts";
+import { applyStrategyOrdering } from "./applyStrategyOrdering.ts";
 import {
   deriveRequestCompatibilityRequirements,
   isVisionIncompatibleTarget,
@@ -312,7 +314,10 @@ export function resolvePinnedTier(
   return [pinnedTarget, ...siblings];
 }
 
-function findComboByName(allCombos: ComboCollectionLike | undefined, name: string): ComboLike | null {
+function findComboByName(
+  allCombos: ComboCollectionLike | undefined,
+  name: string
+): ComboLike | null {
   const list: ComboLike[] = Array.isArray(allCombos)
     ? (allCombos as ComboLike[])
     : ((allCombos as { combos?: ComboLike[] } | undefined)?.combos ?? []);
@@ -345,19 +350,58 @@ async function buildSemaphoreGate(
   };
 }
 
-/**
- * The semaphore gate a LIVE (unpinned) round-robin dispatch of `member` would
- * use — same key format and limits roundRobinCombo.ts computes
- * (`combo:${name}:${executionKey}`, concurrencyPerModel/queueTimeoutMs/
- * queueDepth). Pinned dispatch used to bypass roundRobinCombo.ts entirely, so
- * a pinned session's in-flight request was invisible to the per-model
- * concurrency cap it enforces. Returns null when neither the combo being
- * dispatched nor the single nested tier `member` runs under is round-robin —
- * there is no gate for a pinned attempt to join.
- *
- * Resolves at most one level of nesting (the combo-ref tier `member` lives
- * directly under, matching resolvePinnedTier's own tier boundary).
- */
+type PinnedMemberPolicy = {
+  combo: ComboLike;
+  strategy: string;
+  config: ComboSetupConfig;
+  target: ResolvedComboTarget;
+};
+
+function resolvePinnedMemberPolicy(args: {
+  combo: ComboLike;
+  strategy: string;
+  member: ResolvedComboTarget;
+  allCombos?: ComboCollectionLike;
+  config: ComboSetupConfig;
+  settings?: Record<string, unknown> | null;
+  hiddenModelsByProvider?: HiddenModelsByProvider;
+}): PinnedMemberPolicy {
+  const { combo, strategy, member, allCombos, config, settings, hiddenModelsByProvider } = args;
+  const rootPolicy = { combo, strategy, config, target: member };
+  const separatorIndex = member.executionKey.indexOf(">");
+  if (separatorIndex === -1 || !allCombos) return rootPolicy;
+  if (normalizeNestedComboMode(config.nestedComboMode) !== "execute") return rootPolicy;
+
+  const tierStepId = member.executionKey.slice(0, separatorIndex);
+  const units = resolveComboRuntimeUnits(
+    combo,
+    allCombos,
+    "execute",
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const tierUnit = units.find((unit) => unit.executionKey === tierStepId);
+  if (!tierUnit || tierUnit.kind !== "combo-ref") return rootPolicy;
+
+  const nestedCombo = findComboByName(allCombos, tierUnit.comboName);
+  if (!nestedCombo) return rootPolicy;
+  const nestedTargets = resolveComboTargets(
+    nestedCombo,
+    allCombos,
+    clampComboDepth(config.maxComboDepth),
+    hiddenModelsByProvider
+  );
+  const localTarget = nestedTargets.find((target) => target.modelStr === member.modelStr);
+  if (!localTarget) return rootPolicy;
+
+  return {
+    combo: nestedCombo,
+    strategy: normalizeRoutingStrategy(nestedCombo.strategy || "priority"),
+    config: resolveComboSetupConfig(nestedCombo, settings ?? null),
+    target: localTarget,
+  };
+}
+
 async function resolvePinnedRoundRobinGate(args: {
   combo: ComboLike;
   strategy: string;
@@ -367,52 +411,113 @@ async function resolvePinnedRoundRobinGate(args: {
   settings?: Record<string, unknown> | null;
   hiddenModelsByProvider?: HiddenModelsByProvider;
 }): Promise<PinnedSemaphoreGate | null> {
-  const { combo, strategy, member, allCombos, config, settings, hiddenModelsByProvider } = args;
-  const rootConfig = config as unknown as Record<string, unknown>;
+  const policy = resolvePinnedMemberPolicy(args);
+  if (policy.strategy !== "round-robin") return null;
+  return buildSemaphoreGate(
+    policy.combo,
+    policy.config as unknown as Record<string, unknown>,
+    policy.target.executionKey,
+    policy.target.connectionId
+  );
+}
 
-  if (strategy === "round-robin") {
-    return buildSemaphoreGate(combo, rootConfig, member.executionKey, member.connectionId);
+type PinnedMemberPlan = {
+  candidates: Array<ResolvedComboTarget | null>;
+  hedging: boolean;
+  hedgeDelayMs: number;
+  maxParallelTargets: number;
+  releaseReservation: (() => void) | null;
+};
+
+type PinnedCandidateResult = {
+  index: number;
+  response: Response | null;
+};
+
+function resolvePinnedMaxParallelTargets(value: unknown, candidateCount: number): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) return candidateCount;
+  return Math.min(parsed, candidateCount);
+}
+
+async function buildPinnedMemberPlan(args: {
+  member: ResolvedComboTarget | null;
+  body: Record<string, unknown>;
+  combo: ComboLike;
+  strategy: string;
+  config: ComboSetupConfig;
+  sessionKey?: string | null;
+  settings?: Record<string, unknown> | null;
+  allCombos?: ComboCollectionLike;
+  hiddenModelsByProvider?: HiddenModelsByProvider;
+  log: ComboLogger;
+  apiKeyAllowedConnections?: string[] | null;
+}): Promise<PinnedMemberPlan> {
+  const {
+    member,
+    body,
+    combo,
+    strategy,
+    config,
+    sessionKey,
+    settings,
+    allCombos,
+    hiddenModelsByProvider,
+    log,
+    apiKeyAllowedConnections,
+  } = args;
+  if (!member) {
+    return {
+      candidates: [null],
+      hedging: false,
+      hedgeDelayMs: 0,
+      maxParallelTargets: 1,
+      releaseReservation: null,
+    };
   }
 
-  // Not round-robin at the root — `member` may still live inside a nested
-  // round-robin TIER (a combo-ref run under nestedComboMode "execute"; see
-  // resolvePinnedTier).
-  const sep = member.executionKey.indexOf(">");
-  if (sep === -1 || !allCombos) return null;
-  if (normalizeNestedComboMode(config.nestedComboMode) !== "execute") return null;
-
-  const tierStepId = member.executionKey.slice(0, sep);
-  const units = resolveComboRuntimeUnits(
+  const policy = resolvePinnedMemberPolicy({
     combo,
+    strategy,
+    member,
     allCombos,
-    "execute",
-    clampComboDepth(config.maxComboDepth),
-    hiddenModelsByProvider
-  );
-  const tierUnit = units.find((u) => u.executionKey === tierStepId);
-  if (!tierUnit || tierUnit.kind !== "combo-ref") return null;
+    config,
+    settings,
+    hiddenModelsByProvider,
+  });
+  const policyConfig = { ...policy.config };
+  const expandedCandidates = await expandTargetsForAllStrategies({
+    strategy: policy.strategy,
+    targets: [policy.target],
+    comboName: policy.combo.name,
+    config: policyConfig,
+    settings,
+    log,
+    apiKeyAllowedConnectionIds: apiKeyAllowedConnections ?? null,
+  });
+  const { orderedTargets: candidates, quotaShareRelease: releaseReservation } =
+    await applyStrategyOrdering(policy.strategy, expandedCandidates, {
+      combo: policy.combo,
+      config: policyConfig,
+      body,
+      log,
+      apiKeyAllowedConnections: apiKeyAllowedConnections ?? null,
+      sessionKey,
+    });
+  const hedging =
+    policy.config.zeroLatencyOptimizationsEnabled === true &&
+    policy.config.hedging === true &&
+    candidates.length > 1;
 
-  const nestedCombo = findComboByName(allCombos, tierUnit.comboName);
-  if (!nestedCombo) return null;
-  if (normalizeRoutingStrategy(nestedCombo.strategy || "priority") !== "round-robin") return null;
-
-  // Fresh (path-less) resolution — a nested combo dispatched via `execute`
-  // mode runs itself from scratch (its own handleComboChat/handleRoundRobinCombo
-  // call), so its OWN executionKeys are NOT prefixed by the parent's tier step.
-  const nestedTargets = resolveComboTargets(
-    nestedCombo,
-    allCombos,
-    clampComboDepth(config.maxComboDepth),
-    hiddenModelsByProvider
-  );
-  const localTarget = nestedTargets.find((t) => t.modelStr === member.modelStr);
-  if (!localTarget) return null;
-
-  const nestedConfig = resolveComboSetupConfig(nestedCombo, settings ?? null) as unknown as Record<
-    string,
-    unknown
-  >;
-  return buildSemaphoreGate(nestedCombo, nestedConfig, localTarget.executionKey, localTarget.connectionId);
+  return {
+    candidates,
+    hedging,
+    hedgeDelayMs: resolveDelayMs(policy.config.hedgeDelayMs, 500),
+    maxParallelTargets: hedging
+      ? resolvePinnedMaxParallelTargets(policy.combo.config?.maxParallelTargets, candidates.length)
+      : 1,
+    releaseReservation,
+  };
 }
 
 /**
@@ -430,6 +535,7 @@ async function attemptPinnedMember(args: {
   clientRequestedStream: boolean;
   config: ComboSetupConfig;
   handleSingleModelWithTimeout: HandleSingleModel;
+  modelAbortSignal?: AbortSignal;
   log: ComboLogger;
 }): Promise<Response | null> {
   const {
@@ -440,6 +546,7 @@ async function attemptPinnedMember(args: {
     clientRequestedStream,
     config,
     handleSingleModelWithTimeout,
+    modelAbortSignal,
     log,
   } = args;
   let result: Response | null = null;
@@ -457,10 +564,14 @@ async function attemptPinnedMember(args: {
           : "",
       fingerprint: member ? (resolveTargetFingerprint(member) ?? "") : "",
     });
-    result = await handleSingleModelWithTimeout(memberBody, modelStr, {
-      modelPinned: true,
-    } as SingleModelTarget);
+    const target: SingleModelTarget = member
+      ? { ...member, modelPinned: true, modelAbortSignal }
+      : ({ modelPinned: true, modelAbortSignal } as SingleModelTarget);
+    result = await handleSingleModelWithTimeout(memberBody, modelStr, target);
   } catch (err) {
+    if (modelAbortSignal?.aborted && modelAbortSignal.reason === COMBO_HEDGE_CANCELLED_REASON) {
+      return null;
+    }
     log.warn(
       "COMBO",
       `Pinned model ${modelStr} threw error: ${err instanceof Error ? err.message : String(err)}, trying next tier member / falling through to combo retry/fallback`
@@ -474,6 +585,73 @@ async function attemptPinnedMember(args: {
     config,
     log,
   });
+}
+
+async function attemptPinnedMemberPlan(
+  args: Omit<Parameters<typeof attemptPinnedMember>[0], "member" | "modelAbortSignal"> & {
+    plan: PinnedMemberPlan;
+  }
+): Promise<Response | null> {
+  const { plan, ...attemptArgs } = args;
+  const running = new Map<number, Promise<PinnedCandidateResult>>();
+  const controllers = new Map<number, AbortController>();
+  let nextIndex = 0;
+
+  const launchNext = () => {
+    if (nextIndex >= plan.candidates.length) return;
+    const index = nextIndex;
+    const member = plan.candidates[index];
+    const controller = new AbortController();
+    nextIndex += 1;
+    controllers.set(index, controller);
+    running.set(
+      index,
+      attemptPinnedMember({
+        ...attemptArgs,
+        member,
+        modelAbortSignal: controller.signal,
+      }).then((response) => ({ index, response }))
+    );
+  };
+
+  launchNext();
+  while (running.size > 0) {
+    let settled: PinnedCandidateResult | null;
+    if (
+      plan.hedging &&
+      nextIndex < plan.candidates.length &&
+      running.size < plan.maxParallelTargets
+    ) {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const hedgeWindow = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), plan.hedgeDelayMs);
+      });
+      try {
+        settled = await Promise.race([Promise.race(running.values()), hedgeWindow]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      if (settled === null) {
+        launchNext();
+        continue;
+      }
+    } else {
+      settled = await Promise.race(running.values());
+    }
+
+    running.delete(settled.index);
+    controllers.delete(settled.index);
+    if (settled.response) {
+      for (const controller of controllers.values()) {
+        controller.abort(COMBO_HEDGE_CANCELLED_REASON);
+      }
+      void Promise.allSettled(running.values());
+      return settled.response;
+    }
+    if (running.size < plan.maxParallelTargets) launchNext();
+  }
+
+  return null;
 }
 
 /**
@@ -522,6 +700,7 @@ export async function tryPinnedModelDispatch(args: {
   /** Needed to re-pin a tier sibling (rule 1) and to resolve a nested tier's config (rule 3). */
   effectiveSessionId?: string | null;
   settings?: Record<string, unknown> | null;
+  apiKeyAllowedConnections?: string[] | null;
   clientRequestedStream: boolean;
   handleSingleModelWithTimeout: HandleSingleModel;
   log: ComboLogger;
@@ -536,6 +715,7 @@ export async function tryPinnedModelDispatch(args: {
     strategy = "priority",
     effectiveSessionId = null,
     settings = null,
+    apiKeyAllowedConnections = null,
     clientRequestedStream,
     handleSingleModelWithTimeout,
     log,
@@ -640,16 +820,34 @@ export async function tryPinnedModelDispatch(args: {
           ? `Bypassing strategy — routing directly to pinned context model: ${memberModelStr}`
           : `Trying tier sibling for pinned context model: ${memberModelStr}`
       );
-      const accepted = await attemptPinnedMember({
-        modelStr: memberModelStr,
+      const plan = await buildPinnedMemberPlan({
         member,
         body,
         combo,
-        clientRequestedStream,
+        strategy,
         config,
-        handleSingleModelWithTimeout,
+        sessionKey: effectiveSessionId,
+        settings,
+        allCombos,
+        hiddenModelsByProvider,
         log,
+        apiKeyAllowedConnections,
       });
+      let accepted: Response | null;
+      try {
+        accepted = await attemptPinnedMemberPlan({
+          plan,
+          modelStr: memberModelStr,
+          body,
+          combo,
+          clientRequestedStream,
+          config,
+          handleSingleModelWithTimeout,
+          log,
+        });
+      } finally {
+        plan.releaseReservation?.();
+      }
       if (accepted) {
         if (!isPrimary && effectiveSessionId) {
           recordSessionModelUsage(

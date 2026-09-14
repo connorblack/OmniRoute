@@ -16,6 +16,7 @@ import { COLORS } from "../../utils/stream.ts";
 import { recordTokenUsage } from "../../services/tokenLimitCounter.ts";
 import { computeBillableTokens } from "./upstreamTimeouts.ts";
 import { type EffectiveServiceTier } from "./serviceTier.ts";
+import type { AttemptObservation } from "../../services/slowStartCooldown.ts";
 
 export type RecordNonStreamingUsageStatsContext = {
   traceEnabled: boolean;
@@ -28,6 +29,7 @@ export type RecordNonStreamingUsageStatsContext = {
   isCombo: boolean;
   comboStrategy: string | null | undefined;
   endpoint?: string | null | undefined;
+  attemptObservation?: AttemptObservation | null;
 };
 
 function logUsageTrace(
@@ -40,15 +42,30 @@ function logUsageTrace(
 }
 
 function persistUsageRow(usage: object, ctx: RecordNonStreamingUsageStatsContext): void {
-  const { provider, connectionId, model, startTime, apiKeyInfo, effectiveServiceTier } = ctx;
+  const {
+    provider,
+    connectionId,
+    model,
+    startTime,
+    apiKeyInfo,
+    effectiveServiceTier,
+    attemptObservation,
+  } = ctx;
+  const elapsedMs = Date.now() - startTime;
   saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
     tokens: usage,
     status: "200",
     success: true,
-    latencyMs: Date.now() - startTime,
-    timeToFirstTokenMs: Date.now() - startTime,
+    latencyMs: elapsedMs,
+    timeToFirstTokenMs: attemptObservation?.requestToHeadersMs ?? elapsedMs,
+    upstreamHeadersMs: attemptObservation?.upstreamHeadersMs,
+    requestToHeadersMs: attemptObservation?.requestToHeadersMs,
+    outcomeSource: attemptObservation?.outcomeSource,
+    upstreamStatus: attemptObservation?.upstreamStatus ?? undefined,
+    upstreamRequestId: attemptObservation?.upstreamRequestId,
+    upstreamLifecycleStatus: attemptObservation?.upstreamLifecycleStatus,
     errorCode: null,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,

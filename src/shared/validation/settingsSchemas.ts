@@ -546,6 +546,16 @@ export const updateSettingsSchema = z.object({
         .max(20, "Must be at most 20")
         .optional(),
       useExponentialBackoff: z.boolean().optional(),
+      slowStart: z
+        .object({
+          enabled: z.boolean(),
+          providers: z.array(z.string().min(1).max(100)).min(1).max(50),
+          thresholdMs: z.number().int().min(1000).max(900000),
+          failuresBeforeCooldown: z.number().int().min(1).max(20),
+          observationWindowMs: z.number().int().min(10000).max(86400000),
+          cooldownStepsMs: z.array(z.number().int().min(5000).max(3600000)).min(1).max(10),
+        })
+        .optional(),
     })
     .optional(),
 });

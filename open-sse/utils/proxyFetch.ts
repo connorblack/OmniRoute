@@ -58,23 +58,18 @@ const RELAY_RETRY_AGENT = new Agent({
   allowH2: true,
 });
 
-// A hung relay must fail BEFORE the client/agent timeout (typically 30s) so the
-// caller sees a relay-specific failure instead of a generic upstream timeout.
-// Overridable via OMNIROUTE_RELAY_FETCH_TIMEOUT_MS (capped at 29s so the
-// relay-specific timeout always fires first).
-function readRelayFetchTimeoutMs(): number {
-  const raw = process.env.OMNIROUTE_RELAY_FETCH_TIMEOUT_MS;
-  if (raw == null || raw.trim() === "") return 25_000;
+export function resolveRelayFetchTimeoutMs(raw: string | undefined): number | null {
+  if (raw == null || raw.trim() === "") return null;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 1) {
-    console.warn(
-      `[ProxyFetch] Invalid OMNIROUTE_RELAY_FETCH_TIMEOUT_MS="${raw}". Using default 25000.`
-    );
-    return 25_000;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    console.warn("[ProxyFetch] Ignoring invalid OMNIROUTE_RELAY_FETCH_TIMEOUT_MS value.");
+    return null;
   }
-  return Math.min(Math.floor(parsed), 29_000);
+  return Math.floor(parsed);
 }
-const RELAY_FETCH_TIMEOUT_MS = readRelayFetchTimeoutMs();
+const RELAY_FETCH_TIMEOUT_MS = resolveRelayFetchTimeoutMs(
+  process.env.OMNIROUTE_RELAY_FETCH_TIMEOUT_MS
+);
 
 // Shared retry backoff for the direct / relay / proxy retry-once paths.
 // Overridable via OMNIROUTE_RETRY_BACKOFF_MS (0 = retry immediately).
@@ -109,9 +104,10 @@ const TLS_PROVIDER_PROFILE: Record<string, { browser: string; os: string }> = {
   maxai: { browser: "firefox_150", os: "windows" },
 };
 
-function tlsProfileForProvider(
-  provider: string | null | undefined
-): { browserProfile?: string; os?: string } {
+function tlsProfileForProvider(provider: string | null | undefined): {
+  browserProfile?: string;
+  os?: string;
+} {
   if (!provider) return {};
   const p = TLS_PROVIDER_PROFILE[provider.trim().toLowerCase()];
   return p ? { browserProfile: p.browser, os: p.os } : {};
@@ -996,17 +992,9 @@ async function patchedFetch(
       console.debug(`[ProxyFetch] Routing via ${vc.type || "edge"} relay: ${hostForLogs}`);
     }
 
-    // #9100/#9158: pooled, timed, retried relay egress. Bare `originalFetch` had
-    // no pooling — a throttled relay serialized concurrent requests behind ~30s
-    // stalls. Route through the module-level RELAY_POOL_AGENT (FOUR reused TCP
-    // connections per relay host, pipelining 4 — a single connection let one
-    // long SSE stream monopolize the pool, HOL-blocking every other request),
-    // cap EACH attempt at RELAY_FETCH_TIMEOUT_MS (default 25s, before the typical
-    // 30s client/agent timeout), and retry ONCE on transport failure through a
-    // FRESH no-keep-alive RELAY_RETRY_AGENT. An internal per-attempt timeout is
-    // NOT retried — it fails fast as RELAY_TIMEOUT (504). Do NOT fall back to
-    // native fetch for the relay path: it has no pooling and would churn
-    // connections again.
+    // Pooled relay egress reuses four TCP connections per host. The caller's
+    // signal owns the default deadline. An explicit OMNIROUTE_RELAY_FETCH_TIMEOUT_MS
+    // adds a per-attempt relay cap and is never retried.
     const _undiciRelay =
       deps.undiciFetch ?? (undiciFetch as unknown as (...args: unknown[]) => Promise<Response>);
     const hasNonReplayableRelayBody = requestHasNonReplayableBody(input, options);
@@ -1020,7 +1008,10 @@ async function patchedFetch(
       // AbortSignal.any([...]) so the relay branch stays free of the literal
       // word `any` (T11 any-budget checker).
       const relayController = new AbortController();
-      const relayTimer = setTimeout(() => relayController.abort(), RELAY_FETCH_TIMEOUT_MS);
+      const relayTimer =
+        RELAY_FETCH_TIMEOUT_MS === null
+          ? null
+          : setTimeout(() => relayController.abort(), RELAY_FETCH_TIMEOUT_MS);
       const onCallerAbort = () => relayController.abort();
       options.signal?.addEventListener("abort", onCallerAbort, { once: true });
       try {
@@ -1038,7 +1029,10 @@ async function patchedFetch(
         // The manual relayController fires only on this branch's own timer, so
         // `relayController.signal.aborted` alone cannot be a caller abort; when
         // BOTH fire, the caller abort wins (guarded by the check below).
-        const isRelayTimeout = relayController.signal.aborted && options?.signal?.aborted !== true;
+        const isRelayTimeout =
+          RELAY_FETCH_TIMEOUT_MS !== null &&
+          relayController.signal.aborted &&
+          options?.signal?.aborted !== true;
         if (isRelayTimeout) {
           const timeoutErr = new Error(
             `[ProxyFetch] Relay timed out after ${RELAY_FETCH_TIMEOUT_MS}ms (${proxyUrlForLogs(relayUrl)})`
@@ -1069,7 +1063,7 @@ async function patchedFetch(
         }
         throw relayError;
       } finally {
-        clearTimeout(relayTimer);
+        if (relayTimer !== null) clearTimeout(relayTimer);
         options.signal?.removeEventListener("abort", onCallerAbort);
       }
     }
