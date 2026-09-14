@@ -15,6 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..", "..");
 const GENERATOR = join(ROOT, "scripts", "cli", "generate-api-commands.mjs");
 const REAL_COMBOS = join(ROOT, "bin", "cli", "api-commands", "combos.mjs");
+const REAL_USAGE = join(ROOT, "bin", "cli", "api-commands", "usage.mjs");
 
 // Minimal fixture spec reproducing the exact shape that broke: a path
 // parameter declared via $ref to a components/parameters entry, on a PATCH
@@ -170,6 +171,16 @@ test("real generated bin/cli/api-commands/combos.mjs has --id and --body on the 
     /url = url\.replace\("\{id\}", encodeURIComponent\(opts\.id/,
     "PATCH combo command must substitute {id} in the URL, not send it literally"
   );
+});
+
+test("real generated call-detail command requires and substitutes its id", () => {
+  const src = readFileSync(REAL_USAGE, "utf8");
+  const block = src.match(
+    / {2}tag\.command\("get-api-usage-call-logs-id-"\)[\s\S]*?(?=\n {2}tag\.command\(|\n\})/
+  );
+  assert.ok(block, "usage.mjs must contain the generated call-detail command");
+  assert.match(block[0], /\.requiredOption\("--id <id>"/);
+  assert.match(block[0], /url = url\.replace\("\{id\}", encodeURIComponent\(opts\.id/);
 });
 
 test("real generated combo-test command accepts and forwards its required request body", () => {
