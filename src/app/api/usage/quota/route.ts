@@ -62,8 +62,9 @@ function buildQuotaEntry(
       : null;
 
   let quotaTotal: number | null = null;
-  let quotaUsed = 0;
-  let percentRemaining = 100;
+  let quotaUsed: number | null = null;
+  let percentRemaining: number | null = null;
+  let quotaStatus: "known" | "unknown" | "cooldown" = "unknown";
   const learned =
     learnedLimit && typeof learnedLimit === "object" && !Array.isArray(learnedLimit)
       ? (learnedLimit as Record<string, unknown>)
@@ -79,6 +80,7 @@ function buildQuotaEntry(
       : null;
 
   if (learnedLimitValue !== null && learnedLimitValue > 0) {
+    quotaStatus = "known";
     quotaTotal = learnedLimitValue;
     const remaining =
       learnedRemainingValue !== null
@@ -88,24 +90,14 @@ function buildQuotaEntry(
     percentRemaining = (remaining / learnedLimitValue) * 100;
   } else {
     const resetAtMs = toDateMs(resetAt);
-    if (resetAtMs !== null && resetAtMs > Date.now()) {
-      quotaTotal = 100;
-      quotaUsed = 100;
-      percentRemaining = 0;
-    } else {
-      // Fallback synthetic signal from queue pressure when limit headers are unavailable.
-      const queued = typeof rateStatus.queued === "number" ? rateStatus.queued : 0;
-      const running = typeof rateStatus.running === "number" ? rateStatus.running : 0;
-      const executing = typeof rateStatus.executing === "number" ? rateStatus.executing : 0;
-
-      const syntheticUsage = Math.min(95, queued * 10 + running * 5 + executing * 3);
-      if (syntheticUsage > 0) {
-        quotaTotal = 100;
-        quotaUsed = syntheticUsage;
-        percentRemaining = 100 - syntheticUsage;
-      }
-    }
+    if (resetAtMs !== null && resetAtMs > Date.now()) quotaStatus = "cooldown";
   }
+
+  const queuePressure = {
+    queued: typeof rateStatus.queued === "number" ? rateStatus.queued : 0,
+    running: typeof rateStatus.running === "number" ? rateStatus.running : 0,
+    executing: typeof rateStatus.executing === "number" ? rateStatus.executing : 0,
+  };
 
   return sanitizeQuotaProvider({
     name,
@@ -114,6 +106,8 @@ function buildQuotaEntry(
     quotaUsed,
     quotaTotal,
     percentRemaining,
+    quotaStatus,
+    queuePressure,
     resetAt,
     tokenStatus: deriveTokenStatus(connection),
   });

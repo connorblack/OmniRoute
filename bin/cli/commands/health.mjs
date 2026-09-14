@@ -1,4 +1,5 @@
-import { apiFetch, isServerUp } from "../api.mjs";
+import { apiFetch, readApiResponse } from "../api.mjs";
+import { emit } from "../output.mjs";
 import { t } from "../i18n.mjs";
 
 export function registerHealth(program) {
@@ -10,7 +11,7 @@ export function registerHealth(program) {
     .option("--alerts-only", "Show only components with alerts")
     .action(async (opts, cmd) => {
       const globalOpts = cmd.optsWithGlobals();
-      const exitCode = await runHealthCommand({ ...opts, output: globalOpts.output });
+      const exitCode = await runHealthCommand({ ...globalOpts, ...opts });
       if (exitCode !== 0) process.exit(exitCode);
     });
 
@@ -20,7 +21,7 @@ export function registerHealth(program) {
     .option("--alerts-only", "Show only components with alerts")
     .action(async (opts, cmd) => {
       const globalOpts = cmd.optsWithGlobals();
-      const exitCode = await runHealthComponentsCommand({ ...opts, output: globalOpts.output });
+      const exitCode = await runHealthComponentsCommand({ ...globalOpts, ...opts });
       if (exitCode !== 0) process.exit(exitCode);
     });
 
@@ -41,27 +42,17 @@ export function registerHealth(program) {
 }
 
 export async function runHealthCommand(opts = {}) {
-  const serverUp = await isServerUp();
-  if (!serverUp) {
-    console.error(t("health.noServer"));
-    return 1;
-  }
-
   try {
+    const timeout = Number.parseInt(opts.timeout, 10);
     const res = await apiFetch("/api/monitoring/health", {
+      ...opts,
       retry: false,
-      timeout: 5000,
-      acceptNotOk: true,
+      timeout: Number.isFinite(timeout) ? timeout : 5000,
     });
-    if (!res.ok) {
-      console.error(t("common.error", { message: `HTTP ${res.status}` }));
-      return 1;
-    }
-
-    const health = await res.json();
+    const health = await readApiResponse(res);
 
     if (opts.json || opts.output === "json") {
-      console.log(JSON.stringify(health, null, 2));
+      emit(health, opts);
       return 0;
     }
 
@@ -97,24 +88,29 @@ export async function runHealthCommand(opts = {}) {
 
 export async function runHealthComponentsCommand(opts = {}) {
   try {
+    const timeout = Number.parseInt(opts.timeout, 10);
     const res = await apiFetch("/api/monitoring/health", {
+      ...opts,
       retry: false,
-      timeout: 5000,
-      acceptNotOk: true,
+      timeout: Number.isFinite(timeout) ? timeout : 5000,
     });
-    if (!res.ok) {
-      console.error(`HTTP ${res.status}`);
-      return 1;
-    }
-    const health = await res.json();
+    const health = await readApiResponse(res);
     const components = health.components || health.circuitBreakers || {};
+    const rows = [];
     for (const [name, info] of Object.entries(components)) {
       const status =
         typeof info === "object" ? info.state || info.status || "unknown" : String(info);
       const isAlert = status !== "closed" && status !== "ok" && status !== "healthy";
       if (opts.alertsOnly && !isAlert) continue;
-      const icon = isAlert ? "\x1b[33m⚠\x1b[0m" : "\x1b[32m✓\x1b[0m";
-      console.log(`  ${icon} ${name.padEnd(24)} ${status}`);
+      rows.push({ name, status, alert: isAlert });
+    }
+    if (opts.output === "json") {
+      emit(rows, opts);
+      return 0;
+    }
+    for (const row of rows) {
+      const icon = row.alert ? "\x1b[33m⚠\x1b[0m" : "\x1b[32m✓\x1b[0m";
+      console.log(`  ${icon} ${row.name.padEnd(24)} ${row.status}`);
     }
     return 0;
   } catch (err) {

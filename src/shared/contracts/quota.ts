@@ -1,15 +1,36 @@
-export type QuotaTokenStatus = "valid" | "expiring" | "expired" | "refreshing";
+import { toNumberOrNull } from "@/shared/utils/numeric";
 
-export interface QuotaProviderEntry {
+export type QuotaTokenStatus = "valid" | "expiring" | "expired" | "refreshing";
+export type QuotaStatus = "known" | "unknown" | "cooldown";
+
+export type QuotaQueuePressure = {
+  queued: number;
+  running: number;
+  executing: number;
+};
+
+type QuotaProviderBase = {
   name: string;
   provider: string;
   connectionId: string;
-  quotaUsed: number;
-  quotaTotal: number | null;
-  percentRemaining: number;
   resetAt: string | null;
   tokenStatus: QuotaTokenStatus;
-}
+  queuePressure: QuotaQueuePressure;
+};
+
+export type QuotaProviderEntry =
+  | (QuotaProviderBase & {
+      quotaStatus: "known";
+      quotaUsed: number;
+      quotaTotal: number;
+      percentRemaining: number;
+    })
+  | (QuotaProviderBase & {
+      quotaStatus: "unknown" | "cooldown";
+      quotaUsed: null;
+      quotaTotal: null;
+      percentRemaining: null;
+    });
 
 export interface QuotaResponseMeta {
   generatedAt: string;
@@ -25,15 +46,12 @@ export interface QuotaResponse {
   meta: QuotaResponseMeta;
 }
 
-const TOKEN_STATUS_VALUES: QuotaTokenStatus[] = ["valid", "expiring", "expired", "refreshing"];
+function field(source: object, key: string): unknown {
+  return Reflect.get(source, key);
+}
 
-function toNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
+function record(value: unknown): object {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -41,50 +59,76 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function normalizeTokenStatus(value: unknown): QuotaTokenStatus {
-  if (typeof value === "string" && TOKEN_STATUS_VALUES.includes(value as QuotaTokenStatus)) {
-    return value as QuotaTokenStatus;
+  switch (value) {
+    case "expiring":
+    case "expired":
+    case "refreshing":
+      return value;
+    default:
+      return "valid";
   }
-  return "valid";
+}
+
+function normalizeQueuePressure(value: unknown): QuotaQueuePressure {
+  const source = record(value);
+  const read = (key: string) => Math.max(0, toNumberOrNull(field(source, key)) ?? 0);
+  return {
+    queued: read("queued"),
+    running: read("running"),
+    executing: read("executing"),
+  };
+}
+
+function normalizeQuotaStatus(value: unknown): QuotaStatus | null {
+  return value === "known" || value === "unknown" || value === "cooldown" ? value : null;
 }
 
 export function sanitizeQuotaProvider(input: unknown): QuotaProviderEntry {
-  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const provider = typeof source.provider === "string" ? source.provider : "unknown";
-  const name = typeof source.name === "string" && source.name.trim() ? source.name : provider;
+  const source = record(input);
+  const rawProvider = field(source, "provider");
+  const provider = typeof rawProvider === "string" ? rawProvider : "unknown";
+  const rawName = field(source, "name");
+  const name = typeof rawName === "string" && rawName.trim() ? rawName : provider;
+  const rawConnectionId = field(source, "connectionId");
   const connectionId =
-    typeof source.connectionId === "string" && source.connectionId.trim()
-      ? source.connectionId
-      : "unknown";
+    typeof rawConnectionId === "string" && rawConnectionId.trim() ? rawConnectionId : "unknown";
+  const rawResetAt = field(source, "resetAt");
+  const resetAt = typeof rawResetAt === "string" && rawResetAt.trim() ? rawResetAt : null;
+  const tokenStatus = normalizeTokenStatus(field(source, "tokenStatus"));
+  const queuePressure = normalizeQueuePressure(field(source, "queuePressure"));
 
-  const quotaTotalRaw = toNumber(source.quotaTotal);
-  const quotaTotal = quotaTotalRaw !== null && quotaTotalRaw >= 0 ? quotaTotalRaw : null;
+  const quotaTotalValue = toNumberOrNull(field(source, "quotaTotal"));
+  const quotaStatus =
+    normalizeQuotaStatus(field(source, "quotaStatus")) ??
+    (quotaTotalValue !== null && quotaTotalValue > 0 ? "known" : "unknown");
 
-  const quotaUsedRaw = toNumber(source.quotaUsed) ?? 0;
-  const quotaUsed =
-    quotaTotal !== null ? clamp(quotaUsedRaw, 0, quotaTotal) : Math.max(0, quotaUsedRaw);
-
-  let percentRemainingRaw = toNumber(source.percentRemaining);
-  if (percentRemainingRaw === null) {
-    if (quotaTotal && quotaTotal > 0) {
-      percentRemainingRaw = ((quotaTotal - quotaUsed) / quotaTotal) * 100;
-    } else {
-      percentRemainingRaw = 100;
-    }
+  if (quotaStatus !== "known" || quotaTotalValue === null || quotaTotalValue <= 0) {
+    return {
+      name,
+      provider,
+      connectionId,
+      quotaUsed: null,
+      quotaTotal: null,
+      percentRemaining: null,
+      resetAt,
+      tokenStatus,
+      quotaStatus: quotaStatus === "cooldown" ? "cooldown" : "unknown",
+      queuePressure,
+    };
   }
-  const percentRemaining = clamp(percentRemainingRaw, 0, 100);
 
-  const resetAt =
-    typeof source.resetAt === "string" && source.resetAt.trim() ? source.resetAt : null;
-
+  const quotaUsed = clamp(toNumberOrNull(field(source, "quotaUsed")) ?? 0, 0, quotaTotalValue);
   return {
     name,
     provider,
     connectionId,
     quotaUsed,
-    quotaTotal,
-    percentRemaining,
+    quotaTotal: quotaTotalValue,
+    percentRemaining: clamp(((quotaTotalValue - quotaUsed) / quotaTotalValue) * 100, 0, 100),
     resetAt,
-    tokenStatus: normalizeTokenStatus(source.tokenStatus),
+    tokenStatus,
+    quotaStatus: "known",
+    queuePressure,
   };
 }
 
@@ -92,36 +136,29 @@ export function normalizeQuotaResponse(
   raw: unknown,
   filters: { provider?: string | null; connectionId?: string | null } = {}
 ): QuotaResponse {
-  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const providersRaw = Array.isArray(source.providers)
-    ? source.providers
+  const source = record(raw);
+  const sourceProviders = field(source, "providers");
+  const providersRaw = Array.isArray(sourceProviders)
+    ? sourceProviders
     : Array.isArray(raw)
       ? raw
       : [];
-
   const providers = providersRaw.map((entry) => sanitizeQuotaProvider(entry));
 
-  const sourceMeta =
-    source.meta && typeof source.meta === "object" ? (source.meta as Record<string, unknown>) : {};
-  const sourceFilters =
-    sourceMeta.filters && typeof sourceMeta.filters === "object"
-      ? (sourceMeta.filters as Record<string, unknown>)
-      : {};
-
+  const sourceMeta = record(field(source, "meta"));
+  const sourceFilters = record(field(sourceMeta, "filters"));
+  const metaProvider = field(sourceFilters, "provider");
+  const metaConnection = field(sourceFilters, "connectionId");
   const providerFilter =
     filters.provider ??
-    (typeof sourceFilters.provider === "string" && sourceFilters.provider.trim()
-      ? sourceFilters.provider
-      : null);
+    (typeof metaProvider === "string" && metaProvider.trim() ? metaProvider : null);
   const connectionFilter =
     filters.connectionId ??
-    (typeof sourceFilters.connectionId === "string" && sourceFilters.connectionId.trim()
-      ? sourceFilters.connectionId
-      : null);
-
+    (typeof metaConnection === "string" && metaConnection.trim() ? metaConnection : null);
+  const rawGeneratedAt = field(sourceMeta, "generatedAt");
   const generatedAt =
-    typeof sourceMeta.generatedAt === "string" && sourceMeta.generatedAt.trim()
-      ? sourceMeta.generatedAt
+    typeof rawGeneratedAt === "string" && rawGeneratedAt.trim()
+      ? rawGeneratedAt
       : new Date().toISOString();
 
   return {

@@ -95,7 +95,7 @@ test("openapi try rejects a non-success remote response with its typed exit code
       (error: unknown) =>
         error instanceof Error &&
         error.message === "capacity" &&
-        Reflect.get(error, "exitCode") === 69
+        Reflect.get(error, "exitCode") === 1
     );
   } finally {
     globalThis.fetch = originalFetch;

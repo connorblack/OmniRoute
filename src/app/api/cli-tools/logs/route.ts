@@ -37,6 +37,8 @@ const NUMERIC_LEVEL_MAP: Record<number, string> = {
   60: "fatal",
 };
 
+const LOG_LEVELS = new Set(Object.values(NUMERIC_LEVEL_MAP));
+
 function parseLevel(raw: string | number): string {
   if (typeof raw === "number") {
     return NUMERIC_LEVEL_MAP[raw] || "info";
@@ -82,6 +84,14 @@ export async function GET(request: NextRequest) {
 
     const rawLimit = parseInt(searchParams.get("limit") || "500", 10);
     const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 500, 2000);
+    const requestIdFilter = searchParams.get("requestId");
+    const apiKeyFilter = searchParams.get("apiKey");
+    const comboFilter = searchParams.get("combo");
+    const statusFilter = searchParams.get("status");
+    const durationMin = Number(searchParams.get("durationMin"));
+    const durationMax = Number(searchParams.get("durationMax"));
+    const hasDurationMin = searchParams.has("durationMin") && Number.isFinite(durationMin);
+    const hasDurationMax = searchParams.has("durationMax") && Number.isFinite(durationMax);
 
     const logPath = getAppLogFilePath();
 
@@ -124,13 +134,53 @@ export async function GET(request: NextRequest) {
           const haystack = [
             String(entry.component || ""),
             String(entry.module || ""),
+            String(entry.tag || ""),
             String(entry.msg || ""),
           ]
             .join(" ")
             .toLowerCase();
 
-          const matches = filterTokens.some((token) => haystack.includes(token));
+          const matches = filterTokens.some((token) =>
+            LOG_LEVELS.has(token) ? entry.level === token : haystack.includes(token)
+          );
           if (!matches) continue;
+        }
+
+        if (requestIdFilter) {
+          const requestIds = [
+            entry.requestId,
+            entry.request_id,
+            entry.correlationId,
+            entry.correlation_id,
+            entry.traceId,
+          ]
+            .map(stringifyLogValue)
+            .join(" ");
+          if (!requestIds.includes(requestIdFilter)) continue;
+        }
+        if (apiKeyFilter) {
+          const apiKeys = [entry.apiKey, entry.api_key, entry.apiKeyId, entry.apiKeyName, entry.key]
+            .map(stringifyLogValue)
+            .join(" ");
+          if (!apiKeys.includes(apiKeyFilter)) continue;
+        }
+        if (comboFilter) {
+          const combos = [entry.combo, entry.comboName, entry.combo_name]
+            .map(stringifyLogValue)
+            .join(" ");
+          if (!combos.includes(comboFilter)) continue;
+        }
+        if (statusFilter) {
+          const status = stringifyLogValue(entry.status ?? entry.statusCode ?? entry.status_code);
+          if (!status.startsWith(statusFilter)) continue;
+        }
+        if (hasDurationMin || hasDurationMax) {
+          const duration = Number(
+            entry.durationMs ?? entry.duration ?? entry.latencyMs ?? entry.latency
+          );
+          if (!Number.isFinite(duration)) continue;
+          if (hasDurationMin && duration < durationMin) continue;
+          if (hasDurationMax && duration > durationMax) continue;
         }
 
         entries.push(entry);

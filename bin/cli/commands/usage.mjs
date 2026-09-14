@@ -32,9 +32,22 @@ const budgetSchema = [
 
 const quotaSchema = [
   { key: "provider", header: "Provider", width: 20 },
-  { key: "limit", header: "Limit", formatter: fmtTokens },
-  { key: "used", header: "Used", formatter: fmtTokens },
-  { key: "remaining", header: "Remaining", formatter: fmtTokens },
+  { key: "connectionId", header: "Connection", width: 12 },
+  {
+    key: "limit",
+    header: "Limit",
+    formatter: (value) => (value == null ? "unknown" : fmtTokens(value)),
+  },
+  {
+    key: "used",
+    header: "Used",
+    formatter: (value) => (value == null ? "unknown" : fmtTokens(value)),
+  },
+  {
+    key: "remaining",
+    header: "Remaining %",
+    formatter: (value) => (value == null ? "unknown" : `${Number(value).toFixed(1)}%`),
+  },
   { key: "resetAt", header: "Reset At", formatter: fmtTs },
   { key: "state", header: "State" },
 ];
@@ -190,6 +203,34 @@ export async function runBudgetReset(scope, opts, cmd) {
   }
 }
 
+export function toQuotaRows(data) {
+  return toArray(data.providers ?? data.data ?? (Array.isArray(data) ? data : [])).map((row) => {
+    const limit = row.quotaTotal ?? row.limit ?? row.quota ?? row.maxTokens ?? null;
+    const used = row.quotaUsed ?? row.used ?? row.tokensUsed ?? null;
+    const state =
+      row.quotaStatus ??
+      row.state ??
+      (limit === null || limit === undefined
+        ? "unknown"
+        : Number(row.percentRemaining ?? row.remaining ?? 0) > 0
+          ? "available"
+          : "exhausted");
+    const remaining =
+      state === "known" || state === "available" || state === "exhausted"
+        ? (row.percentRemaining ?? row.remaining ?? null)
+        : null;
+    return {
+      provider: row.provider ?? row.providerId ?? "",
+      connectionId: row.connectionId ?? null,
+      limit,
+      used,
+      remaining,
+      resetAt: row.resetAt ?? row.nextReset ?? null,
+      state,
+    };
+  });
+}
+
 export async function runUsageQuota(opts, cmd) {
   const globalOpts = cmd.optsWithGlobals();
   const p = new URLSearchParams();
@@ -197,17 +238,7 @@ export async function runUsageQuota(opts, cmd) {
   if (opts.check) p.set("check", "true");
   const res = await fetchOrExit(`/api/usage/quota?${p}`, globalOpts);
   const data = await res.json();
-  const rows = toArray(data.providers ?? data.data ?? (Array.isArray(data) ? data : [])).map(
-    (r) => ({
-      provider: r.provider ?? r.providerId ?? "",
-      limit: r.limit ?? r.quota ?? r.maxTokens ?? null,
-      used: r.used ?? r.tokensUsed ?? null,
-      remaining: r.remaining ?? r.percentRemaining ?? null,
-      resetAt: r.resetAt ?? r.nextReset ?? null,
-      state: r.state ?? (r.percentRemaining > 0 ? "available" : "exhausted"),
-    })
-  );
-  emit(rows, globalOpts, quotaSchema);
+  emit(toQuotaRows(data), globalOpts, quotaSchema);
 }
 
 export async function runUsageLogs(opts, cmd) {
