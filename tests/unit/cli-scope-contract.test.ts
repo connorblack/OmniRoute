@@ -47,6 +47,35 @@ test("status remote reads the selected gateway and excludes workstation paths", 
   }
 });
 
+test("health reads the selected remote gateway without a local preflight", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalWrite = process.stdout.write;
+  const requested: string[] = [];
+  let stdout = "";
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    requested.push(String(url));
+    return response({ status: "healthy", activeConnections: 7 });
+  }) as typeof fetch;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    stdout += String(chunk);
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const { runHealthCommand } = await import("../../bin/cli/commands/health.mjs");
+    const code = await runHealthCommand({
+      baseUrl: "https://remote.example.test",
+      context: "remote",
+      output: "json",
+    });
+    assert.equal(code, 0);
+    assert.deepEqual(requested, ["https://remote.example.test/api/monitoring/health"]);
+    assert.deepEqual(JSON.parse(stdout), { status: "healthy", activeConnections: 7 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.stdout.write = originalWrite;
+  }
+});
+
 test("remote doctor runs gateway checks without reading workstation state", async () => {
   const originalFetch = globalThis.fetch;
   const requested: string[] = [];
