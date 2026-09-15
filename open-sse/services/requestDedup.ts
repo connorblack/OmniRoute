@@ -218,6 +218,16 @@ export async function deduplicate<T>(
     resolve = res;
     reject = rej;
   });
+  // The first (non-duplicate) caller below awaits fn() directly, not
+  // sharedPromise — sharedPromise only gets a real consumer when a
+  // concurrent duplicate request joins via `existing` above. When no
+  // duplicate ever joins (the common case), reject(err) on an
+  // unobserved promise is an unhandledRejection that can crash the
+  // process even though the error is also correctly thrown to this
+  // call's own caller below (#zero-timeout-crash). Attach a permanent
+  // no-op handler so Node always considers it handled; this does not
+  // affect what awaiters of `existing` observe.
+  sharedPromise.catch(() => {});
   inflight.set(hash, sharedPromise as Promise<unknown>);
 
   const timer = setTimeout(() => {
