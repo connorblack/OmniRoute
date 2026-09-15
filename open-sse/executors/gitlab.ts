@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   BaseExecutor,
-  mergeAbortSignals,
+  withTimeoutSignal,
   mergeUpstreamExtraHeaders,
   type ExecuteInput,
   type ExecutorLog,
@@ -468,8 +468,7 @@ export class GitlabExecutor extends BaseExecutor {
     bodyText: string;
   }> {
     const endpoints = buildGitLabOAuthEndpoints(root);
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
     const response = await fetch(endpoints.directAccessUrl, {
       method: "POST",
       headers: {
@@ -636,10 +635,7 @@ export class GitlabExecutor extends BaseExecutor {
   ) {
     const headers = { ...target.headers };
     mergeUpstreamExtraHeaders(headers, input.upstreamExtraHeaders);
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = input.signal
-      ? mergeAbortSignals(input.signal, timeoutSignal)
-      : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(input.signal, FETCH_TIMEOUT_MS);
     const response = await fetch(target.url, {
       method: "POST",
       headers,

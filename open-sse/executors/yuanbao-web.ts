@@ -20,7 +20,7 @@
  */
 import {
   BaseExecutor,
-  mergeAbortSignals,
+  withTimeoutSignal,
   mergeUpstreamExtraHeaders,
   type ExecuteInput,
 } from "./base.ts";
@@ -222,8 +222,7 @@ export class YuanbaoWebExecutor extends BaseExecutor {
       "X-Agentid": DEFAULT_AGENT_ID,
     };
 
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
 
     // ── Step 1: create conversation ─────────────────────────────────────────
     let conversationId: string;

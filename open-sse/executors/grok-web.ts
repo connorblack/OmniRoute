@@ -15,7 +15,7 @@
 import {
   BaseExecutor,
   mergeUpstreamExtraHeaders,
-  mergeAbortSignals,
+  withTimeoutSignal,
   type ExecuteInput,
   type ExecutorLog,
 } from "./base.ts";
@@ -1011,8 +1011,7 @@ export class GrokWebExecutor extends BaseExecutor {
     log?.info?.("GROK-WEB", `Query to ${model} (modeId=${modeId}), len=${message.length}`);
 
     // Apply fetch timeout
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
 
     // Fetch from Grok via TLS-impersonating client (#3180).
     // Grok sits behind Cloudflare Enterprise which rejects Node's native TLS

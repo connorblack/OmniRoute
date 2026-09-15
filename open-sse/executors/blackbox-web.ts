@@ -2,6 +2,7 @@ import {
   BaseExecutor,
   mergeAbortSignals,
   mergeUpstreamExtraHeaders,
+  withTimeoutSignal,
   type ExecuteInput,
 } from "./base.ts";
 import { FETCH_TIMEOUT_MS } from "../config/constants.ts";
@@ -497,11 +498,7 @@ export class BlackboxWebExecutor extends BaseExecutor {
       selectedElement: null,
     };
 
-    const timeoutSignal = FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
-    const combinedSignal =
-      signal && timeoutSignal
-        ? mergeAbortSignals(signal, timeoutSignal)
-        : (signal ?? timeoutSignal ?? undefined);
+    const combinedSignal = withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
 
     let upstreamResponse: Response;
     try {

@@ -10,6 +10,7 @@
  */
 
 import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/error";
+import { withTimeoutSignal } from "@omniroute/open-sse/executors/base";
 import { getServiceModels, saveServiceModels, type ServiceModel } from "@/lib/db/serviceModels";
 import { updateVersionManagerTool } from "@/lib/db/versionManager";
 
@@ -30,7 +31,7 @@ export async function syncServiceModels(
   try {
     const res = await fetch(`${baseUrl}/v1/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
     });
 
     if (!res.ok) {

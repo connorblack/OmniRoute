@@ -19,6 +19,7 @@ import {
   type GrokResetCreditToken,
   type GrokResetCreditsSnapshot,
 } from "./grokResetCreditsFrame.ts";
+import { withTimeoutSignal } from "../executors/base.ts";
 
 const GROK_RESET_CREDITS_URL =
   "https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets";
@@ -139,7 +140,7 @@ export async function fetchGrokResetCredits(
       method: "POST",
       headers: grokRpcHeaders(accessToken),
       body: GRPC_WEB_EMPTY_REQUEST_FRAME,
-      signal: FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined,
+      signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     const decoded = decodeGrokResetCreditsFrame(Buffer.from(await response.arrayBuffer()));
@@ -157,7 +158,7 @@ async function loadInventory(
     method: "POST",
     headers: grokRpcHeaders(accessToken),
     body: GRPC_WEB_EMPTY_REQUEST_FRAME,
-    signal: FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined,
+    signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new GrokResetCreditError(

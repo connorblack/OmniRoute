@@ -14,6 +14,7 @@
 import type { UsageQuota } from "./quota.ts";
 import { parseResetTime } from "./quota.ts";
 import { toRecord, toNumber, roundCurrency } from "./scalars.ts";
+import { withTimeoutSignal } from "../../executors/base.ts";
 
 /** Upstream API base. Environment override mirrors sibling fetchers. */
 const KILO_API_BASE: string = process.env.KILO_API_URL || "https://api.kilo.ai";
@@ -140,7 +141,7 @@ export async function fetchKiloPassState(token: string): Promise<KiloPassState |
     const response = await fetch(`${KILO_API_BASE}${PASS_PATH}?${params}`, {
       method: "GET",
       headers: kiloHeaders(token),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     return parseKiloPassState(await response.json());
@@ -246,7 +247,7 @@ async function fetchBalance(token: string): Promise<number> {
     response = await fetch(BALANCE_URL, {
       method: "GET",
       headers: kiloHeaders(token),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     throw new Error(`Kilo Code balance error: ${(error as Error).message}`);

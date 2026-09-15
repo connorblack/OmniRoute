@@ -250,6 +250,39 @@ export function mergeAbortSignals(primary: AbortSignal, secondary: AbortSignal):
   return controller.signal;
 }
 
+/**
+ * Resolve a timeout-derived abort signal, honoring the "0/negative =
+ * disabled" convention used throughout upstream timeout config (see
+ * FETCH_TIMEOUT_MS, getUpstreamTimeoutConfig in
+ * src/shared/utils/runtimeTimeouts.ts). AbortSignal.timeout(0) fires on the
+ * very next timer tick, so passing 0 straight through aborts every request
+ * instantly instead of disabling the timeout (#zero-timeout-crash).
+ */
+export function resolveTimeoutSignal(timeoutMs: number): AbortSignal | null {
+  return timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : null;
+}
+
+// A signal that never aborts. Used so withTimeoutSignal can always return a
+// concrete AbortSignal (never undefined) even when there is neither a caller
+// signal nor an active timeout, keeping call sites' existing non-optional
+// `signal: AbortSignal` typing intact.
+const NEVER_ABORT_SIGNAL: AbortSignal = new AbortController().signal;
+
+/**
+ * Combine an optional caller-provided abort signal with a timeout-derived
+ * one (see resolveTimeoutSignal). This is the one place fetch call sites
+ * should build a "caller signal + request timeout" combined signal from a
+ * config-sourced timeout that may be 0 (disabled).
+ */
+export function withTimeoutSignal(
+  signal: AbortSignal | null | undefined,
+  timeoutMs: number
+): AbortSignal {
+  const timeoutSignal = resolveTimeoutSignal(timeoutMs);
+  if (signal && timeoutSignal) return mergeAbortSignals(signal, timeoutSignal);
+  return signal ?? timeoutSignal ?? NEVER_ABORT_SIGNAL;
+}
+
 import {
   hasActiveClaudeThinking,
   readNestedThinkingBudget,

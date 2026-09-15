@@ -22,6 +22,7 @@
 import fs from "fs";
 import path from "path";
 import { z } from "zod";
+import { withTimeoutSignal } from "@omniroute/open-sse/executors/base";
 
 const ALL_PROVIDERS_URL = "https://openrouter.ai/api/frontend/v1/all-providers";
 const CATALOG_MODELS_URL = "https://openrouter.ai/api/frontend/v1/catalog/models";
@@ -130,7 +131,7 @@ async function fetchJson(url: string): Promise<unknown> {
       "User-Agent": "OmniRoute/2.0",
       Accept: "application/json",
     },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: withTimeoutSignal(undefined, FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`${url} returned ${res.status}: ${res.statusText}`);
