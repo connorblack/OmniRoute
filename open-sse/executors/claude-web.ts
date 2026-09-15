@@ -14,7 +14,7 @@ import { tlsFetchClaude } from "../services/claudeTlsClient.ts";
 import { buildErrorBody, sanitizeErrorMessage } from "../utils/error.ts";
 import {
   BaseExecutor,
-  mergeAbortSignals,
+  withTimeoutSignal,
   type ExecuteInput,
   type ExecutorLog,
   type ProviderCredentials,
@@ -115,8 +115,7 @@ function getBrowserHeaders(
 }
 
 function combineWithTimeout(signal?: AbortSignal | null): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-  return signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+  return withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
 }
 
 async function verifyCookieValidity(

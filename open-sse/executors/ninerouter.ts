@@ -22,7 +22,7 @@
 import {
   BaseExecutor,
   mergeUpstreamExtraHeaders,
-  mergeAbortSignals,
+  withTimeoutSignal,
   type ProviderCredentials,
   type ExecuteInput,
 } from "./base.ts";
@@ -167,10 +167,7 @@ export class NineRouterExecutor extends BaseExecutor {
     );
     mergeUpstreamExtraHeaders(headers, input.upstreamExtraHeaders ?? null);
 
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = input.signal
-      ? mergeAbortSignals(input.signal, timeoutSignal)
-      : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(input.signal, FETCH_TIMEOUT_MS);
 
     input.log?.info?.(
       "9ROUTER",

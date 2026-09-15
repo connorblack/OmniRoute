@@ -20,7 +20,7 @@
  */
 import {
   BaseExecutor,
-  mergeAbortSignals,
+  withTimeoutSignal,
   mergeUpstreamExtraHeaders,
   type ExecuteInput,
 } from "./base.ts";
@@ -342,8 +342,7 @@ export class HuggingChatExecutor extends BaseExecutor {
     };
 
     // -- Step 1: Create conversation ----------------------------------------
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const combinedSignal = signal ? mergeAbortSignals(signal, timeoutSignal) : timeoutSignal;
+    const combinedSignal = withTimeoutSignal(signal, FETCH_TIMEOUT_MS);
 
     let conversationId: string;
     try {

@@ -26,7 +26,7 @@
 import {
   BaseExecutor,
   mergeUpstreamExtraHeaders,
-  mergeAbortSignals,
+  withTimeoutSignal,
   type ProviderCredentials,
   type ExecutorLog,
 } from "./base.ts";
@@ -235,11 +235,7 @@ export class DarioExecutor extends BaseExecutor {
     );
     mergeUpstreamExtraHeaders(headers, input.upstreamExtraHeaders);
 
-    const timeoutSignal = FETCH_TIMEOUT_MS > 0 ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
-    const combinedSignal =
-      input.signal && timeoutSignal
-        ? mergeAbortSignals(input.signal, timeoutSignal)
-        : (input.signal ?? timeoutSignal ?? undefined);
+    const combinedSignal = withTimeoutSignal(input.signal, FETCH_TIMEOUT_MS);
 
     input.log?.info?.("DARIO", `Dario → ${url} (model: ${input.model}, shape: ${shape})`);
 
