@@ -13,6 +13,7 @@ services:
       retries: 3
 
   omniroute:
+    image: omniroute-bic:local
     build:
       context: ${OMNIROUTE_SOURCE_DIR:-/home/bicadmin/github/OmniRoute}
       dockerfile: Dockerfile
