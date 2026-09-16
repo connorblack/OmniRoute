@@ -94,37 +94,22 @@ test("cooled account is skipped on next request — second connection selected",
   const conn2 = await seedConnection("mistral", { apiKey: "mistral-key-2" });
 
   const originalFetch = globalThis.fetch;
-  let fetchCallCount = 0;
+  const keysUsed: string[] = [];
 
   try {
     const { createEmbeddingResponse } = await import("../../src/lib/embeddings/service.ts");
 
-    // First request: upstream returns 402 → conn1 gets cooled.
-    globalThis.fetch = (async () => {
-      fetchCallCount++;
-      return new Response(JSON.stringify({ error: "subscription expired" }), {
-        status: 402,
-        headers: { "Content-Type": "application/json" },
-      });
-    }) as typeof globalThis.fetch;
-
-    const res1 = await createEmbeddingResponse(
-      { model: "mistral-embed", input: "hello" },
-      { connectionId: conn1 }
-    );
-    assert.equal(res1.status, 402);
-
-    // Wait for fire-and-forget cooldown write.
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
-
-    // Verify conn1 is cooled.
-    const conn1After = await providersDb.getProviderConnectionById(conn1);
-    assert.equal(conn1After.testStatus, "credits_exhausted", "conn1 must be cooled");
-
-    // Second request: upstream returns 200.
-    globalThis.fetch = (async () => {
-      fetchCallCount++;
+    // Upstream returns 402 for conn1's key only → conn1 gets cooled, and the
+    // same request rotates to conn2 instead of surfacing the 402.
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const key = String((init?.headers as Record<string, string>)?.Authorization ?? "");
+      keysUsed.push(key);
+      if (key.endsWith("mistral-key-1")) {
+        return new Response(JSON.stringify({ error: "subscription expired" }), {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       return new Response(
         JSON.stringify({
           data: [{ embedding: [0.1, 0.2], index: 0 }],
@@ -135,10 +120,27 @@ test("cooled account is skipped on next request — second connection selected",
       );
     }) as typeof globalThis.fetch;
 
+    const res1 = await createEmbeddingResponse(
+      { model: "mistral-embed", input: "hello" },
+      { connectionId: conn1 }
+    );
+    assert.equal(res1.status, 200, "first request must fail over to conn2");
+    assert.deepEqual(keysUsed, ["Bearer mistral-key-1", "Bearer mistral-key-2"]);
+
+    // Wait for fire-and-forget cooldown write.
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    // Verify conn1 is cooled.
+    const conn1After = await providersDb.getProviderConnectionById(conn1);
+    assert.equal(conn1After.testStatus, "credits_exhausted", "conn1 must be cooled");
+
     // Call without specifying connectionId — credential selection should
     // skip conn1 (credits_exhausted) and pick conn2.
+    keysUsed.length = 0;
     const res2 = await createEmbeddingResponse({ model: "mistral-embed", input: "world" }, {});
     assert.equal(res2.status, 200, "second request must succeed via conn2");
+    assert.deepEqual(keysUsed, ["Bearer mistral-key-2"]);
 
     // Verify conn2 is still healthy.
     const conn2After = await providersDb.getProviderConnectionById(conn2);
