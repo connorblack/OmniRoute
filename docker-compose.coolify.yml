@@ -14,7 +14,7 @@ services:
 
   omniroute:
     build:
-      context: .
+      context: ${OMNIROUTE_SOURCE_DIR:-/home/bicadmin/github/OmniRoute}
       dockerfile: Dockerfile
       target: ${OMNIROUTE_IMAGE_TARGET:-runner-base}
       args:
