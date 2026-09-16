@@ -1,0 +1,145 @@
+# Policy for syncing Hermes request timeouts to OmniRoute's own worst-case
+# combo budget. Read by sync_hermes_timeouts.py. See README.md for the
+# formula derivation and file:line citations into both codebases.
+#
+# Rule: hermes_timeout_s = ceil(omniroute_budget_s + margin_s)
+#   margin_s = max(margin_floor_s, omniroute_budget_s * margin_pct)
+#
+# omniroute_budget_s is computed per combo from the LIVE gateway
+# (GET /api/combos, GET /api/settings/combo-defaults), not from the numbers
+# baked into this file — the numbers here only govern the shape of the
+# formula (caps, margin), not the per-combo inputs.
+
+formula:
+  margin_floor_s: 10
+  margin_pct: 0.10
+
+  # OmniRoute's own hard ceiling on a combo call when the combo has no
+  # comboTimeoutMs of its own (config.comboTimeoutMs is 0/unset). Mirrors
+  # COMBO_LOOP_SAFETY_TIMEOUT_MS in OmniRoute source (comboPredicates.ts:34).
+  # Kept configurable here because it is a source-level constant, not
+  # something exposed by the live API — bump this if OmniRoute changes it.
+  combo_loop_safety_timeout_s: 600
+
+  # Mirrors OmniRoute's MAX_GLOBAL_ATTEMPTS (comboPredicates.ts:107,112,134-137):
+  # total attempts (members x per-member retries) across the whole combo
+  # call, shared across all members. Bounds how many members the worst-case
+  # sum realistically walks before OmniRoute's own bookkeeping stops it.
+  max_global_attempts: 30
+
+  # Above this many seconds, a derived Hermes timeout is flagged instead of
+  # proposed outright: it means the combo has no comboTimeoutMs of its own
+  # and is only bounded by OmniRoute's blanket combo_loop_safety_timeout_s,
+  # not a value someone actually chose for that task. Raising Hermes to
+  # match a blanket safety net (rather than a deliberate per-combo ceiling)
+  # is treated as unreasonable; the fix belongs on the OmniRoute side
+  # (set config.comboTimeoutMs for that combo).
+  flag_above_seconds: 300
+
+# Caller catalog: one entry per distinct way Hermes can bind a timeout to an
+# OmniRoute combo. `config_key` is a dot path into a Hermes config.yaml for
+# the timeout value. `combo_source` is a dot path in the SAME config to the
+# combo/model NAME that request is routed to — always read live from that
+# profile's own config, never hardcoded here, because the same caller can be
+# bound to a real combo in one profile and to "auto" (no combo, no model) in
+# another (e.g. auxiliary.monitor: code-reviewer sets provider: omni-route /
+# model: hermes/monitor, but the default config and the other three profiles
+# leave it on provider: auto with an empty model). A caller whose
+# combo_source resolves to empty, or to a name absent from the live
+# /api/combos list, is skipped for that profile — see evaluate_caller().
+#
+# `kind: auxiliary` callers get the literal budget+margin proposal (a single
+# one-shot request with a clear per-attempt timeout). `kind: turn` callers
+# (main agent, delegation) bound a whole multi-call turn/child-task, not one
+# request — see README "Why main_agent/delegation are handled differently".
+# For those, the script never proposes shrinking below the current value;
+# it only flags when the current value is already less than budget+margin.
+callers:
+  main_agent:
+    kind: turn
+    config_key: agent.gateway_timeout
+    combo_source: model.default
+  delegation:
+    kind: turn
+    config_key: delegation.child_timeout_seconds
+    combo_source: delegation.model
+  auxiliary.compression:
+    kind: auxiliary
+    config_key: auxiliary.compression.timeout
+    combo_source: auxiliary.compression.model
+  auxiliary.skills_hub:
+    kind: auxiliary
+    config_key: auxiliary.skills_hub.timeout
+    combo_source: auxiliary.skills_hub.model
+  auxiliary.approval:
+    kind: auxiliary
+    config_key: auxiliary.approval.timeout
+    combo_source: auxiliary.approval.model
+  auxiliary.title_generation:
+    kind: auxiliary
+    config_key: auxiliary.title_generation.timeout
+    combo_source: auxiliary.title_generation.model
+  auxiliary.tts_audio_tags:
+    kind: auxiliary
+    config_key: auxiliary.tts_audio_tags.timeout
+    combo_source: auxiliary.tts_audio_tags.model
+  auxiliary.triage_specifier:
+    kind: auxiliary
+    config_key: auxiliary.triage_specifier.timeout
+    combo_source: auxiliary.triage_specifier.model
+  auxiliary.kanban_decomposer:
+    kind: auxiliary
+    config_key: auxiliary.kanban_decomposer.timeout
+    combo_source: auxiliary.kanban_decomposer.model
+  auxiliary.profile_describer:
+    kind: auxiliary
+    config_key: auxiliary.profile_describer.timeout
+    combo_source: auxiliary.profile_describer.model
+  auxiliary.goal_judge:
+    kind: auxiliary
+    config_key: auxiliary.goal_judge.timeout
+    combo_source: auxiliary.goal_judge.model
+  auxiliary.curator:
+    kind: auxiliary
+    config_key: auxiliary.curator.timeout
+    combo_source: auxiliary.curator.model
+  auxiliary.web_extract:
+    kind: auxiliary
+    config_key: auxiliary.web_extract.timeout
+    combo_source: auxiliary.web_extract.model
+  auxiliary.monitor:
+    kind: auxiliary
+    config_key: auxiliary.monitor.timeout
+    combo_source: auxiliary.monitor.model
+
+  # auxiliary.vision, auxiliary.mcp, auxiliary.background_review are NOT
+  # listed: all three use provider: auto with an empty model in every
+  # config we read, so they never resolve to an OmniRoute combo. Hermes's
+  # own default (30s, or a fallback_providers entry for vision) applies
+  # instead and is out of scope for this tool.
+
+# One entry per Hermes config file to sync. `label` is used in report output.
+profiles:
+  default:
+    label: default
+    path: ~/.hermes/config.yaml
+  code-reviewer:
+    label: code-reviewer
+    path: ~/.hermes/profiles/code-reviewer/config.yaml
+  daytona-smoke:
+    label: daytona-smoke
+    path: ~/.hermes/profiles/daytona-smoke/config.yaml
+  kanban-code-orchestrator:
+    label: kanban-code-orchestrator
+    path: ~/.hermes/profiles/kanban-code-orchestrator/config.yaml
+  kanban-code-worker:
+    label: kanban-code-worker
+    path: ~/.hermes/profiles/kanban-code-worker/config.yaml
+
+omniroute:
+  base_url: https://gateway.dev.sellie.ai
+  # Bearer token resolved at runtime from
+  # ~/.omniroute/config.json .contexts."gateway.dev.sellie.ai".accessToken
+  # Never stored here.
+  token_config_path: ~/.omniroute/config.json
+  token_context_key: gateway.dev.sellie.ai
