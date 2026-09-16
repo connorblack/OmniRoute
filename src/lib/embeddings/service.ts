@@ -24,6 +24,7 @@ import { runWithProxyContext } from "@omniroute/open-sse/utils/proxyFetch.ts";
 import { handleComboChat } from "@omniroute/open-sse/services/combo.ts";
 import { resolveBareModelToConnectionDefault } from "@omniroute/open-sse/services/model.ts";
 import { findEmbeddingComboDimensionConflict } from "./familyGuard";
+import { runEmbeddingWithFailover } from "./failover";
 import {
   formatMissingEmbeddingCredentialsError,
   formatUnknownEmbeddingProviderError,
@@ -315,110 +316,129 @@ export async function createEmbeddingResponse(
     );
   }
 
+  // #474: when the request used a bare model name (no "/" — e.g. an alias that
+  // resolved to "auto") and the selected connection declares a defaultModel,
+  // resolve the bare name to that real model ID before the upstream call so the
+  // provider receives a concrete model. A "/"-qualified name is left untouched.
+  const effectiveModelFor = (selected: ProviderCredentialsResult | null) => {
+    const connectionDefaultModel =
+      selected && typeof (selected as { defaultModel?: unknown }).defaultModel === "string"
+        ? ((selected as { defaultModel?: string }).defaultModel as string)
+        : null;
+    return resolveBareModelToConnectionDefault(modelStr, resolvedModel, connectionDefaultModel);
+  };
+
+  const runWithConnection = async (selected: ProviderCredentialsResult | null) => {
+    const effectiveModel = effectiveModelFor(selected);
+
+    // Resolve the connection-level proxy so the upstream embedding request honors
+    // the same per-connection pinning as chat, image generation, and count_tokens
+    // (#1904-style behavior). Without this, embeddings silently fall back to the
+    // global/env proxy and ignore a connection's pinned proxy. Ported from
+    // upstream decolua/9router#1701.
+    let proxyInfo: Awaited<ReturnType<typeof resolveProxyForConnection>> | null = null;
+    const connectionIdForProxy = (selected as { connectionId?: string } | null)?.connectionId;
+    if (connectionIdForProxy) {
+      try {
+        proxyInfo = await resolveProxyForConnection(connectionIdForProxy);
+      } catch (err) {
+        log.error(
+          "EMBED",
+          `Failed to resolve proxy for connection ${connectionIdForProxy}: ${err}`
+        );
+      }
+    }
+
+    const runEmbedding = () =>
+      handleEmbedding({
+        body:
+          effectiveModel !== resolvedModel
+            ? { ...body, model: `${provider}/${effectiveModel}` }
+            : body,
+        // getProviderCredentials returns a richer connection object; handleEmbedding
+        // reads auth plus the optional local baseUrl override. Bridge the wider
+        // selection type to the handler's narrow credential shape.
+        credentials: selected as {
+          apiKey?: string;
+          accessToken?: string;
+          providerSpecificData?: Record<string, unknown> | null;
+        } | null,
+        log,
+        resolvedProvider: providerConfig,
+        resolvedModel: effectiveModel,
+        clientRawRequest: options.clientRawRequest || null,
+        apiKeyId: options.apiKeyId || null,
+        apiKeyName: options.apiKeyName || null,
+        // #10347 — thread the selected connection id so handleEmbedding can cool the
+        // account on a hard upstream failure (previously always null on /v1/embeddings).
+        connectionId: connectionIdForProxy || options.connectionId || null,
+      });
+
+    return connectionIdForProxy
+      ? runWithProxyContext(proxyInfo?.proxy || null, runEmbedding)
+      : runEmbedding();
+  };
+
+  let result: Awaited<ReturnType<typeof handleEmbedding>>;
   if (!credentials && providerConfig.authType !== "none") {
-    credentials = await getProviderCredentials(credentialsProviderId);
-    if (!credentials) {
+    const attempt = await runEmbeddingWithFailover(
+      (excludeConnectionIds) =>
+        getProviderCredentials(credentialsProviderId, null, null, resolvedModel, {
+          excludeConnectionIds,
+        }),
+      runWithConnection
+    );
+    credentials = attempt.credentials;
+    if (!attempt.result) {
+      if (credentials && "allRateLimited" in credentials && credentials.allRateLimited) {
+        return unavailableResponse(
+          HTTP_STATUS.RATE_LIMITED,
+          `[${provider}] All accounts rate limited`,
+          credentials.retryAfter,
+          credentials.retryAfterHuman
+        );
+      }
+      if (credentials && "allExpired" in credentials && credentials.allExpired) {
+        const expiredStatus = (credentials as { expiredStatus?: string }).expiredStatus;
+        const quota = expiredStatus === "credits_exhausted";
+        const reason = quota ? "credits exhausted" : "authentication expired";
+        return errorResponse(
+          quota ? HTTP_STATUS.PAYMENT_REQUIRED : HTTP_STATUS.UNAUTHORIZED,
+          `[${provider}] All ${credentials.expiredCount || 1} connection(s) ${reason} — please reconnect in the dashboard`
+        );
+      }
       return errorResponse(
         HTTP_STATUS.BAD_REQUEST,
         formatMissingEmbeddingCredentialsError(provider)
       );
     }
-    if ("allRateLimited" in credentials && credentials.allRateLimited) {
-      return unavailableResponse(
-        HTTP_STATUS.RATE_LIMITED,
-        `[${provider}] All accounts rate limited`,
-        credentials.retryAfter,
-        credentials.retryAfterHuman
-      );
-    }
-    if ("allExpired" in credentials && credentials.allExpired) {
-      const expiredStatus = (credentials as { expiredStatus?: string }).expiredStatus;
-      const quota = expiredStatus === "credits_exhausted";
-      const reason = quota ? "credits exhausted" : "authentication expired";
-      return errorResponse(
-        quota ? HTTP_STATUS.PAYMENT_REQUIRED : HTTP_STATUS.UNAUTHORIZED,
-        `[${provider}] All ${credentials.expiredCount || 1} connection(s) ${reason} — please reconnect in the dashboard`
-      );
-    }
-  } else if (provider === "ollama-local" || provider === "lmstudio") {
-    // Ollama and LM Studio are keyless, but a configured connection can still
-    // provide a custom local host. Hydrate that optional connection without
-    // imposing an authentication requirement, then keep the static localhost
-    // default when no connection exists. getProviderCredentials("lmstudio")
-    // resolves the dashboard's hyphenated "lm-studio" connection via the
-    // provider search pool/alias (#11233); a selection or rate-limit failure
-    // must not break the flow — proceed without credentials.
-    const localCredentials = await getProviderCredentials(credentialsProviderId);
-    if (
-      localCredentials &&
-      !("allRateLimited" in localCredentials) &&
-      !("allExpired" in localCredentials)
-    ) {
-      credentials = localCredentials;
-    }
-  }
-
-  // #474: when the request used a bare model name (no "/" — e.g. an alias that
-  // resolved to "auto") and the selected connection declares a defaultModel,
-  // resolve the bare name to that real model ID before the upstream call so the
-  // provider receives a concrete model. A "/"-qualified name is left untouched.
-  const connectionDefaultModel =
-    credentials && typeof (credentials as { defaultModel?: unknown }).defaultModel === "string"
-      ? ((credentials as { defaultModel?: string }).defaultModel as string)
-      : null;
-  const effectiveModel = resolveBareModelToConnectionDefault(
-    modelStr,
-    resolvedModel,
-    connectionDefaultModel
-  );
-
-  // Resolve the connection-level proxy so the upstream embedding request honors
-  // the same per-connection pinning as chat, image generation, and count_tokens
-  // (#1904-style behavior). Without this, embeddings silently fall back to the
-  // global/env proxy and ignore a connection's pinned proxy. Ported from
-  // upstream decolua/9router#1701.
-  let proxyInfo: Awaited<ReturnType<typeof resolveProxyForConnection>> | null = null;
-  const connectionIdForProxy = (credentials as { connectionId?: string } | null)?.connectionId;
-  if (connectionIdForProxy) {
-    try {
-      proxyInfo = await resolveProxyForConnection(connectionIdForProxy);
-    } catch (err) {
-      log.error("EMBED", `Failed to resolve proxy for connection ${connectionIdForProxy}: ${err}`);
-    }
-  }
-
-  const runEmbedding = () =>
-    handleEmbedding({
-      body:
-        effectiveModel !== resolvedModel
-          ? { ...body, model: `${provider}/${effectiveModel}` }
-          : body,
-      // getProviderCredentials returns a richer connection object; handleEmbedding
-      // reads auth plus the optional local baseUrl override. Bridge the wider
-      // selection type to the handler's narrow credential shape.
-      credentials: credentials as {
-        apiKey?: string;
-        accessToken?: string;
-        providerSpecificData?: Record<string, unknown> | null;
-      } | null,
-      log,
-      resolvedProvider: providerConfig,
-      resolvedModel: effectiveModel,
-      clientRawRequest: options.clientRawRequest || null,
-      apiKeyId: options.apiKeyId || null,
-      apiKeyName: options.apiKeyName || null,
-      // #10347 — thread the selected connection id so handleEmbedding can cool the
-      // account on a hard upstream failure (previously always null on /v1/embeddings).
-      connectionId:
-        (credentials as { connectionId?: string } | null)?.connectionId ||
-        options.connectionId ||
-        connectionIdForProxy ||
+    result = attempt.result;
+  } else {
+    if (provider === "ollama-local" || provider === "lmstudio") {
+      // Ollama and LM Studio are keyless, but a configured connection can still
+      // provide a custom local host. Hydrate that optional connection without
+      // imposing an authentication requirement, then keep the static localhost
+      // default when no connection exists. getProviderCredentials("lmstudio")
+      // resolves the dashboard's hyphenated "lm-studio" connection via the
+      // provider search pool/alias (#11233); a selection or rate-limit failure
+      // must not break the flow — proceed without credentials.
+      const localCredentials = await getProviderCredentials(
+        credentialsProviderId,
         null,
-    });
-
-  const result = connectionIdForProxy
-    ? await runWithProxyContext(proxyInfo?.proxy || null, runEmbedding)
-    : await runEmbedding();
+        null,
+        resolvedModel
+      );
+      if (
+        localCredentials &&
+        !("allRateLimited" in localCredentials) &&
+        !("allExpired" in localCredentials)
+      ) {
+        credentials = localCredentials;
+      }
+    }
+    result = await runWithConnection(credentials);
+  }
+  const effectiveModel = effectiveModelFor(credentials);
 
   const responseHeaders = new Headers(result.headers);
 

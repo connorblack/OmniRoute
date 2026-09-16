@@ -74,6 +74,7 @@ interface EmbeddingFailure {
   status: number;
   error: string;
   headers?: Headers;
+  retryWithNextConnection?: boolean;
   data?: never;
 }
 
@@ -537,20 +538,25 @@ async function handleUpstreamFailure(
     apiKeyName: runtime.apiKeyName,
     connectionId: runtime.connectionId,
   }).catch(() => {});
+  let retryWithNextConnection = false;
   if (runtime.connectionId) {
     try {
-      await markAccountUnavailable(
+      const marked = await markAccountUnavailable(
         runtime.connectionId,
         response.status,
         errorText,
         runtime.provider,
         runtime.model
       );
+      retryWithNextConnection = marked?.shouldFallback === true;
     } catch {
       // The upstream response has priority over a best-effort cooldown write.
     }
   }
-  return failure(response.status, errorText, stripStaleEncodingHeaders(response.headers));
+  return {
+    ...failure(response.status, errorText, stripStaleEncodingHeaders(response.headers)),
+    retryWithNextConnection,
+  };
 }
 
 function normalizeEmbeddingData(

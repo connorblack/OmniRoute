@@ -4,10 +4,9 @@ import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts
 import {
   getProviderCredentialsWithQuotaPreflight,
   clearRecoveredProviderState,
-  extractApiKey,
-  isValidApiKey,
 } from "@/sse/services/auth";
 import { handleEmbedding } from "@omniroute/open-sse/handlers/embeddings.ts";
+import { runEmbeddingWithFailover } from "@/lib/embeddings/failover";
 import * as log from "@/sse/utils/logger";
 import { enforceApiKeyPolicy } from "@/shared/utils/apiKeyPolicy";
 import { v1EmbeddingsSchema } from "@/shared/validation/schemas";
@@ -71,27 +70,33 @@ export async function POST(request, { params }) {
     }
   }
 
-  const credentials = await getProviderCredentialsWithQuotaPreflight(providerEntry.id);
-  if (!credentials) {
+  const requestedModel = body.model ? body.model.slice(body.model.indexOf("/") + 1) : null;
+  const { credentials, result } = await runEmbeddingWithFailover(
+    (excludeConnectionIds) =>
+      getProviderCredentialsWithQuotaPreflight(providerEntry.id, null, null, requestedModel, {
+        excludeConnectionIds,
+      }),
+    (selected) =>
+      handleEmbedding({
+        body,
+        credentials: selected,
+        log,
+        // #10347 — thread the selected connection id so a hard upstream failure cools
+        // the account instead of re-hitting it on every request.
+        connectionId: (selected as { connectionId?: string }).connectionId ?? null,
+      })
+  );
+  if (!result) {
+    if (credentials?.allRateLimited) {
+      return unavailableResponse(
+        HTTP_STATUS.RATE_LIMITED,
+        `[${rawProvider}] All accounts rate limited`,
+        credentials.retryAfter,
+        credentials.retryAfterHuman
+      );
+    }
     return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${rawProvider}`);
   }
-  if (credentials.allRateLimited) {
-    return unavailableResponse(
-      HTTP_STATUS.RATE_LIMITED,
-      `[${rawProvider}] All accounts rate limited`,
-      credentials.retryAfter,
-      credentials.retryAfterHuman
-    );
-  }
-
-  const result = await handleEmbedding({
-    body,
-    credentials,
-    log,
-    // #10347 — thread the selected connection id so a hard upstream failure cools
-    // the account instead of re-hitting it on every request.
-    connectionId: (credentials as { connectionId?: string } | null)?.connectionId ?? null,
-  });
 
   if (result.success) {
     await clearRecoveredProviderState(credentials);
