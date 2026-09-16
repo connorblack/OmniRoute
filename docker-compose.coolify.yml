@@ -3,6 +3,7 @@
 # Slimmed from the gx10 service hivf559vdhpez2itf2nsxxrf: only redis and omniroute.
 # Dropped: cliproxyapi, bifrost, codex-app-server, codex-appserver-init, host-cli-sync,
 # chatgpt-web-codex-browser, every /home/ken mount, the R2 backup env, the CLI_* env.
+# Reached by IP and port for now (no DNS, no TLS): ports published, AUTH_COOKIE_SECURE off.
 services:
   redis:
     image: docker.io/dragonflydb/dragonfly:v1.40.1
@@ -29,21 +30,22 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    ports:
+      - "20128:20128"
+      - "20132:20132"
     volumes:
       - omniroute-data:/app/data
     environment:
-      SERVICE_URL_OMNIROUTE_20128: /
-      SERVICE_FQDN_OMNIROUTE_20132: /live-ws
       DATA_DIR: /app/data
       REDIS_URL: redis://redis:6379
       PORT: 20128
       OMNIROUTE_BASE_PATH: ""
-      AUTH_COOKIE_SECURE: "true"
-      NEXT_PUBLIC_BASE_URL: ${SERVICE_URL_OMNIROUTE}
+      AUTH_COOKIE_SECURE: "false"
+      NEXT_PUBLIC_BASE_URL: http://${PUBLIC_IP}:20128
       LIVE_WS_PORT: 20132
       LIVE_WS_HOST: 0.0.0.0
-      NEXT_PUBLIC_LIVE_WS_PUBLIC_URL: wss://${SERVICE_FQDN_OMNIROUTE}/live-ws
-      LIVE_WS_ALLOWED_ORIGINS: ${SERVICE_URL_OMNIROUTE}
+      NEXT_PUBLIC_LIVE_WS_PUBLIC_URL: ws://${PUBLIC_IP}:20132
+      LIVE_WS_ALLOWED_ORIGINS: http://${PUBLIC_IP}:20128
       OMNIROUTE_MEMORY_MB: ${OMNIROUTE_MEMORY_MB:-4096}
       STREAM_READINESS_MAX_TIMEOUT_MS: ${STREAM_READINESS_MAX_TIMEOUT_MS:-600000}
       STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-240000}
