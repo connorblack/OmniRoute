@@ -1,9 +1,3 @@
-# OmniRoute for the BenAdmin program, Coolify "Docker Compose" resource built from the
-# OmniRoute repo (branch deploy/azure-bic, file docker-compose.coolify.yml).
-# Slimmed from the gx10 service hivf559vdhpez2itf2nsxxrf: only redis and omniroute.
-# Dropped: cliproxyapi, bifrost, codex-app-server, codex-appserver-init, host-cli-sync,
-# chatgpt-web-codex-browser, every /home/ken mount, the R2 backup env, the CLI_* env.
-# Reached by IP and port for now (no DNS, no TLS): ports published, AUTH_COOKIE_SECURE off.
 services:
   redis:
     image: docker.io/dragonflydb/dragonfly:v1.40.1
