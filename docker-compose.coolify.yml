@@ -5,37 +5,33 @@ services:
     ulimits:
       memlock: -1
     volumes:
-      - redis-data:/data
+    - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+      - CMD
+      - redis-cli
+      - ping
       interval: 5s
       timeout: 5s
       retries: 3
-
   omniroute:
-    image: omniroute-bic:local
-    build:
-      context: ${OMNIROUTE_SOURCE_DIR:-/home/bicadmin/github/OmniRoute}
-      dockerfile: Dockerfile
-      target: ${OMNIROUTE_IMAGE_TARGET:-runner-base}
-      args:
-        OMNIROUTE_BASE_PATH: ""
+    image: sellieai/omniroute-bic:deploy-azure-bic-4e23ac171
     restart: unless-stopped
     stop_grace_period: 40s
     depends_on:
       redis:
         condition: service_healthy
     ports:
-      - "20128:20128"
-      - "20132:20132"
+    - 20128:20128
+    - 20132:20132
     volumes:
-      - omniroute-data:/app/data
+    - omniroute-data:/app/data
     environment:
       DATA_DIR: /app/data
       REDIS_URL: redis://redis:6379
       PORT: 20128
-      OMNIROUTE_BASE_PATH: ""
-      AUTH_COOKIE_SECURE: "false"
+      OMNIROUTE_BASE_PATH: ''
+      AUTH_COOKIE_SECURE: 'false'
       NEXT_PUBLIC_BASE_URL: http://${PUBLIC_IP}:20128
       LIVE_WS_PORT: 20132
       LIVE_WS_HOST: 0.0.0.0
@@ -60,12 +56,14 @@ services:
       OMNIROUTE_WS_BRIDGE_SECRET: ${SERVICE_REALBASE64_64_WSBRIDGE}
       STORAGE_ENCRYPTION_KEY: ${SERVICE_HEX_64_STORAGE}
     healthcheck:
-      test: ["CMD", "node", "healthcheck.mjs"]
+      test:
+      - CMD
+      - node
+      - healthcheck.mjs
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
-
 volumes:
-  redis-data:
-  omniroute-data:
+  redis-data: null
+  omniroute-data: null
