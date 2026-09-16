@@ -1,0 +1,74 @@
+# OmniRoute for the BenAdmin program, Coolify "Docker Compose" resource built from the
+# OmniRoute repo (branch deploy/azure-bic, file docker-compose.coolify.yml).
+# Slimmed from the gx10 service hivf559vdhpez2itf2nsxxrf: only redis and omniroute.
+# Dropped: cliproxyapi, bifrost, codex-app-server, codex-appserver-init, host-cli-sync,
+# chatgpt-web-codex-browser, every /home/ken mount, the R2 backup env, the CLI_* env.
+services:
+  redis:
+    image: docker.io/dragonflydb/dragonfly:v1.40.1
+    restart: unless-stopped
+    ulimits:
+      memlock: -1
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+
+  omniroute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ${OMNIROUTE_IMAGE_TARGET:-runner-base}
+      args:
+        OMNIROUTE_BASE_PATH: ""
+    restart: unless-stopped
+    stop_grace_period: 40s
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - omniroute-data:/app/data
+    environment:
+      SERVICE_URL_OMNIROUTE_20128: /
+      SERVICE_FQDN_OMNIROUTE_20132: /live-ws
+      DATA_DIR: /app/data
+      REDIS_URL: redis://redis:6379
+      PORT: 20128
+      OMNIROUTE_BASE_PATH: ""
+      AUTH_COOKIE_SECURE: "true"
+      NEXT_PUBLIC_BASE_URL: ${SERVICE_URL_OMNIROUTE}
+      LIVE_WS_PORT: 20132
+      LIVE_WS_HOST: 0.0.0.0
+      NEXT_PUBLIC_LIVE_WS_PUBLIC_URL: wss://${SERVICE_FQDN_OMNIROUTE}/live-ws
+      LIVE_WS_ALLOWED_ORIGINS: ${SERVICE_URL_OMNIROUTE}
+      OMNIROUTE_MEMORY_MB: ${OMNIROUTE_MEMORY_MB:-4096}
+      STREAM_READINESS_MAX_TIMEOUT_MS: ${STREAM_READINESS_MAX_TIMEOUT_MS:-600000}
+      STREAM_IDLE_TIMEOUT_MS: ${STREAM_IDLE_TIMEOUT_MS:-240000}
+      FETCH_TIMEOUT_MS: ${FETCH_TIMEOUT_MS:-0}
+      OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS: ${OMNIROUTE_DIRECT_HEADERS_TIMEOUT_MS:-0}
+      CALL_LOGS_TABLE_MAX_ROWS: ${CALL_LOGS_TABLE_MAX_ROWS:-5000000}
+      PROXY_LOGS_TABLE_MAX_ROWS: ${PROXY_LOGS_TABLE_MAX_ROWS:-5000000}
+      APP_LOG_MAX_FILES: ${APP_LOG_MAX_FILES:-200}
+      APP_LOG_RETENTION_DAYS: ${APP_LOG_RETENTION_DAYS:-90}
+      CHAT_LOG_MAX_BODY_KB: ${CHAT_LOG_MAX_BODY_KB:-4096}
+      PRICING_SYNC_ENABLED: ${PRICING_SYNC_ENABLED:-true}
+      OMNIROUTE_RELAY_BACKEND: auto
+      OMNIROUTE_BOOTSTRAP_TOKEN: ${OMNIROUTE_BOOTSTRAP_TOKEN:?}
+      JWT_SECRET: ${SERVICE_REALBASE64_64_OMNIROUTE_JWT:?}
+      API_KEY_SECRET: ${SERVICE_HEX_64_OMNIROUTE_API_KEY:?}
+      INITIAL_PASSWORD: ${SERVICE_PASSWORD_OMNIROUTE_ADMIN:?}
+      OMNIROUTE_WS_BRIDGE_SECRET: ${SERVICE_REALBASE64_64_OMNIROUTE_WS_BRIDGE:?}
+      STORAGE_ENCRYPTION_KEY: ${STORAGE_ENCRYPTION_KEY:?}
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  redis-data:
+  omniroute-data:
