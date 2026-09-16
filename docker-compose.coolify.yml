@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 3
   omniroute:
-    image: sellieai/omniroute-bic:deploy-azure-bic-4e23ac171
+    image: sellieai/omniroute:deploy-azure-bic-4e23ac171
     restart: unless-stopped
     stop_grace_period: 40s
     depends_on:
