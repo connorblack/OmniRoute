@@ -211,6 +211,12 @@ export const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "101",
     toName: "api_key_usage_limits",
   },
+  {
+    fromVersion: "177",
+    fromName: "attempt_phase_timing",
+    toVersion: "180",
+    toName: "attempt_phase_timing",
+  },
 ] as const;
 
 export const LEGACY_VERSION_SLOT_MIGRATIONS = [

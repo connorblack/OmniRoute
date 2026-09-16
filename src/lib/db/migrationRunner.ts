@@ -598,6 +598,32 @@ function isSchemaAlreadyApplied(
       // a bare ADD COLUMN would then throw. Renumbering the migration means renaming this case
       // (keyed by version only: a stale "177" here would skip 177_provider_connection_synced_models_at).
       return hasColumn(db, "proxy_logs", "upstream_status");
+    case "180":
+      // Renumbered from 177 (collided with 177_provider_connection_synced_models_at
+      // on the release/v3.8.51 merge).
+      return (
+        [
+          "upstream_headers_ms",
+          "request_to_headers_ms",
+          "first_upstream_byte_ms",
+          "first_useful_event_ms",
+          "first_content_ms",
+          "terminal_ms",
+          "ttft_ms",
+          "outcome_source",
+          "upstream_status",
+          "upstream_request_id",
+          "upstream_lifecycle_status",
+        ].every((column) => hasColumn(db, "call_logs", column)) &&
+        [
+          "upstream_headers_ms",
+          "request_to_headers_ms",
+          "outcome_source",
+          "upstream_status",
+          "upstream_request_id",
+          "upstream_lifecycle_status",
+        ].every((column) => hasColumn(db, "usage_history", column))
+      );
     default:
       return false;
   }
