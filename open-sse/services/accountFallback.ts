@@ -50,7 +50,10 @@ import {
 } from "../../src/shared/constants/providers";
 import { resolveUseUpstream429BreakerHints } from "../../src/shared/utils/providerHints";
 import { getCodexModelScope } from "../config/codexQuotaScopes.ts";
-import { getQuotaScopedModelForProvider, isAntigravityQuotaProvider } from "./antigravityQuotaFamily.ts";
+import {
+  getQuotaScopedModelForProvider,
+  isAntigravityQuotaProvider,
+} from "./antigravityQuotaFamily.ts";
 import { persistAntigravityFamilyCooldownIfQuota } from "./antigravityFamilyCooldown.ts";
 import {
   classifyGeminiQuotaMetricFromText,
@@ -65,12 +68,13 @@ import {
   MAX_SHORT_RETRY_HINT_MS,
 } from "./retryAfterJson.ts";
 import { isMoonshotAccountBalanceExhausted } from "./usage/moonshotOpenPlatform.ts";
-import { isTpdRateLimit, resolveTpdCooldownMs } from "./dailyQuotaReset.ts";
+import { isTpdRateLimit, resolveTpdCooldownMs, nextConfiguredResetMs } from "./dailyQuotaReset.ts";
 
 // Pre-compiled regex constants for hot-path retry parsing (avoid per-call compilation)
 const RETRY_AFTER_RE = /retry\s+after\s+(\d+)\s*s/i;
 const PLEASE_RETRY_RE = /please retry in\s+([\d.]+\s*s)/i;
-const ISO_RETRY_RE = /\b(?:try again at|wait until|reset(?:s)? at|available at|retry after)\s+(\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/i;
+const ISO_RETRY_RE =
+  /\b(?:try again at|wait until|reset(?:s)? at|available at|retry after)\s+(\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)/i;
 const RESETS_AFTER_RE = /resets? after (\d+h)?(\d+m)?(\d+s)?/i;
 const WILL_RESET_AFTER_RE = /will reset after (\d+h)?(\d+m)?(\d+s)?/i;
 const RESETS_IN_RE = /resets? in (\d+h)?(\d+m)?(\d+s)?/i;
@@ -78,10 +82,7 @@ const RETRY_IN_SEC_RE = /please retry in (\d+(?:\.\d+)?)\s*s/i;
 const COOLDOWN_NUMERIC_RE = /^\d+(\.\d+)?$/;
 
 export type RetryHintProvenance =
-  | "header"
-  | "google_rpc_retry_info"
-  | "body"
-  | "upstream_daily_reset";
+  "header" | "google_rpc_retry_info" | "body" | "upstream_daily_reset";
 
 export function retryHintBypassesMaxCooldownMs(
   provenance: RetryHintProvenance | undefined
@@ -107,6 +108,8 @@ import { capScaledCooldownMs } from "./accountFallback/cooldownCap.ts";
 import { resolveApiKeyForbiddenFallback } from "./accountFallback/nonRetryableUpstream.ts";
 import * as exactModelLock from "./accountFallback/exactModelLock.ts";
 import { isCreditsExhaustedWithSharedWallet } from "./accountFallback/sharedWalletCredits.ts";
+import { isMistralAmbiguous401 } from "./accountFallback/mistralAmbiguousAuth.ts";
+import { isMistralAmbiguous401SoftLockoutEnabled } from "@/shared/utils/featureFlags";
 export type ProviderProfile = {
   baseCooldownMs: number;
   useUpstreamRetryHints: boolean;
@@ -384,6 +387,7 @@ export const MODEL_ACCESS_DENIED_PATTERNS = [
   /\baccess.*denied.*model\b/i,
   /\bmodel.*access.*denied\b/i,
   /\bplease select a different model\b/i,
+  /\bunknown\s+provider\s+for\s+model\b/i,
   // "...access to the requested model" / "model ... access" — bounded lookahead
   // (no nested quantifiers) so it stays ReDoS-safe while requiring BOTH an
   // access/permission word and "model" so a pure auth error never matches.
@@ -424,6 +428,7 @@ const PROVIDER_MODEL_UNSUPPORTED_PATTERNS = [
   /\b(?:does\s+not\s+support|doesn't\s+support|unsupported)\b[\s\S]{0,80}?\bmodel\b/i,
   /\bunsupported\s+model\b/i,
   /\bplease select a different model\b/i,
+  /\bunknown\s+provider\s+for\s+model\b/i,
 ];
 
 /**
@@ -690,7 +695,13 @@ export async function recordCoreOwnedAntigravityQuotaState({
     }
   );
   if (lockout.cooldownMs > 0 && isProviderExhaustedReason(fallback)) {
-    persistAntigravityFamilyCooldownIfQuota({ provider, connectionId, model, cooldownMs: lockout.cooldownMs, reason: "quota_exhausted" });
+    persistAntigravityFamilyCooldownIfQuota({
+      provider,
+      connectionId,
+      model,
+      cooldownMs: lockout.cooldownMs,
+      reason: "quota_exhausted",
+    });
   }
   return { cooldownMs: lockout.cooldownMs, failureCount: lockout.failureCount };
 }
@@ -712,7 +723,11 @@ function getModelLockKey(
   return `${canonicalProvider}:${connectionId}:${lockModel}`;
 }
 
-function getModelLockScopeKey(scope: ModelLockScope, reason?: string | null, status?: number | null) {
+function getModelLockScopeKey(
+  scope: ModelLockScope,
+  reason?: string | null,
+  status?: number | null
+) {
   if (scope.kind === "provider-model") {
     return `${PROVIDER_MODEL_LOCK_KEY_PREFIX}${getCanonicalLockProvider(scope.provider)}:${scope.model.trim().toLowerCase()}`;
   }
@@ -729,7 +744,11 @@ const getModelLockKeys = exactModelLock.createGetModelLockKeys(
   getCanonicalLockProvider
 );
 
-function getQueryableModelLockKeys(provider: string, connectionId: string, model: string): string[] {
+function getQueryableModelLockKeys(
+  provider: string,
+  connectionId: string,
+  model: string
+): string[] {
   return [
     ...getModelLockKeys(provider, connectionId, model),
     getModelLockScopeKey({ kind: "provider-model", provider, model }),
@@ -1802,7 +1821,7 @@ export function checkFallbackError(
   // #gemini-per-model-budget: only present when the caller already has the
   // dispatching connection in scope. Gates the per-connection ledger check
   // below; callers that lack it fall back to text-only classification.
-  connectionId?: string | null,
+  connectionId?: string | null
 ): {
   shouldFallback: boolean;
   cooldownMs: number;
@@ -1814,6 +1833,8 @@ export function checkFallbackError(
   permanent?: boolean;
   creditsExhausted?: boolean;
   dailyQuotaExhausted?: boolean;
+  /** #13609: bare Mistral 401 softened to a cooldown (MISTRAL_AMBIGUOUS_401_SOFT_LOCKOUT). */
+  ambiguousAuth?: boolean;
   /** G-02: true when the error originates from an embedded service supervisor (not the upstream AI
    * provider itself). Callers should apply connection cooldown only — do NOT record a provider
    * circuit-breaker failure when this flag is set. */
@@ -2142,7 +2163,7 @@ export function checkFallbackError(
           // no clock, no header — short 429, do not guess midnight
           console.warn(
             "[accountFallback] TPD 429 without node daily-reset clock or Reset header; using short cooldown",
-            { provider },
+            { provider }
           );
         } else {
           return {
@@ -2153,7 +2174,13 @@ export function checkFallbackError(
           };
         }
       } else {
-        const msUntilTomorrow = getMsUntilTomorrow();
+        // Operator node clock first; host-midnight estimate when unconfigured.
+        const tzMs = nextConfiguredResetMs(
+          dailyReset?.timezone,
+          dailyReset?.hour,
+          dailyReset?.nowMs ?? Date.now()
+        );
+        const msUntilTomorrow = tzMs ?? getMsUntilTomorrow();
         // Cap at 24 hours to handle timezone edge cases
         const cooldownMs = Math.min(msUntilTomorrow, 24 * 60 * 60 * 1000);
         return {
@@ -2316,6 +2343,16 @@ export function checkFallbackError(
           resolveRuleMatchBody(provider, structuredError ?? null, errorStr)
         )
       : null;
+    // #13609 (opt-in): a bare Mistral 401 is not proof of a dead key — back off
+    // instead; resolveTerminalConnectionStatus bounds how often (ambiguousAuth).
+    if (
+      status === HTTP_STATUS.UNAUTHORIZED &&
+      !providerMatch &&
+      isMistralAmbiguous401(provider, errorStr) &&
+      isMistralAmbiguous401SoftLockoutEnabled()
+    ) {
+      return { ...buildRetryableFallback(RateLimitReason.UNKNOWN), ambiguousAuth: true };
+    }
     const cooldownMs = providerMatch?.cooldownMs ?? configuredRule.cooldownMs ?? 0;
     const ruleScope =
       providerMatch && honorsRuleLockScope(provider) ? providerMatch.scope : undefined;
@@ -2589,7 +2626,13 @@ export function applyErrorState<T extends AccountState | null | undefined>(
   // (`markConnectionQuotaExhausted`) so a DB failure can never crash the
   // chat path. See issue #1 (per-account 429 cascade not persisting).
   const connId = (account as AccountState | null | undefined)?.id;
-  if (typeof connId === "string" && connId.length > 0 && effectiveCooldownMs > 0 && nextState.rateLimitedUntil && !isAntigravityQuotaProvider(prov)) {
+  if (
+    typeof connId === "string" &&
+    connId.length > 0 &&
+    effectiveCooldownMs > 0 &&
+    nextState.rateLimitedUntil &&
+    !isAntigravityQuotaProvider(prov)
+  ) {
     try {
       const untilMs = cooldownUntilMs(nextState.rateLimitedUntil);
       if (Number.isFinite(untilMs) && untilMs > Date.now()) {

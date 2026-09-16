@@ -22,9 +22,8 @@ test("USAGE_FETCHER_PROVIDERS includes ollama-cloud (#7026)", () => {
 });
 
 test("registerGenericQuotaFetchers wires a preflight quota fetcher for ollama-cloud (#7026)", async () => {
-  const { registerGenericQuotaFetchers } = await import(
-    "../../open-sse/services/genericQuotaFetcher.ts"
-  );
+  const { registerGenericQuotaFetchers } =
+    await import("../../open-sse/services/genericQuotaFetcher.ts");
   const { getQuotaFetcher } = await import("../../open-sse/services/quotaPreflight.ts");
   registerGenericQuotaFetchers();
   assert.ok(
@@ -204,11 +203,11 @@ test("getUsageForProvider parses the redesigned single monthly-meter settings pa
   globalThis.fetch = async () =>
     new Response(
       [
-        '<h2><span>Included usage</span>',
+        "<h2><span>Included usage</span>",
         '<span class="capitalize">max</span></h2>',
         "<div>",
         '<div class="flex justify-between mb-2"><span>Monthly usage</span><span>$207.95 of $300 used</span></div>',
-        '<div data-usage-meter>',
+        "<div data-usage-meter>",
         '<div data-usage-bubble aria-hidden="true"><span data-usage-model></span><span data-usage-requests></span></div>',
         '<div data-usage-track aria-label="Monthly usage $207.95 of $300 used">',
         '<div style="width: 69.3%; ">',
@@ -300,5 +299,81 @@ test("getUsageForProvider falls back to the inner width when the monthly aria-la
     globalThis.fetch = originalFetch;
     if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
     else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
+  }
+});
+
+test("getUsageForProvider parses the current $X-of-$Y aria-label with nested width style (#12749)", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCookie = process.env.OLLAMA_USAGE_COOKIE;
+  const originalOmniCookie = process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+  delete process.env.OLLAMA_USAGE_COOKIE;
+  process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = "__Secure-session=test-cookie";
+
+  globalThis.fetch = async () =>
+    new Response(
+      [
+        '<span class="capitalize">pro</span>',
+        '<div class="relative h-3 overflow-hidden rounded-full bg-neutral-200" data-usage-track aria-label="Monthly usage $60.01 of $60 used">',
+        '<div class="flex h-full overflow-hidden bg-neutral-950" style="width: 100%; background: #ef4444;"></div>',
+        '<span class="local-time" data-time="2026-06-22T15:00:00.000Z"></span>',
+        "</div>",
+      ].join(""),
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+
+  try {
+    const result = (await usage.getUsageForProvider({
+      id: "ollama-cloud-new-markup",
+      provider: "ollama-cloud",
+      apiKey: "ollama-chat-key",
+    })) as { message?: string; quotas?: Record<string, { used: number }> };
+
+    assert.ok(
+      result.quotas && Object.keys(result.quotas).length > 0,
+      `expected quotas, got message: ${result.message}`
+    );
+    assert.equal(result.quotas!.session.used, 100);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
+    else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
+    if (originalOmniCookie === undefined) delete process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+    else process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = originalOmniCookie;
+  }
+});
+
+test("getUsageForProvider still finds width style on a nested child when no aria-label percent exists (#12749)", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCookie = process.env.OLLAMA_USAGE_COOKIE;
+  const originalOmniCookie = process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+  delete process.env.OLLAMA_USAGE_COOKIE;
+  process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = "__Secure-session=test-cookie";
+
+  globalThis.fetch = async () =>
+    new Response(
+      [
+        '<div class="relative h-3" data-usage-track aria-label="Weekly usage $12 of $60 used">',
+        '<div class="flex h-full" style="width: 20%;"></div>',
+        '<span class="local-time" data-time="2026-06-29T15:00:00.000Z"></span>',
+        "</div>",
+      ].join(""),
+      { status: 200, headers: { "content-type": "text/html" } }
+    );
+
+  try {
+    const result = (await usage.getUsageForProvider({
+      id: "ollama-cloud-nested-width",
+      provider: "ollama-cloud",
+      apiKey: "ollama-chat-key",
+    })) as { quotas?: Record<string, { used: number }> };
+
+    // The aria-label ratio ($12 of $60 = 20%) is used, matching the nested style width fallback.
+    assert.equal(result.quotas!.session.used, 20);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
+    else process.env.OLLAMA_USAGE_COOKIE = originalCookie;
+    if (originalOmniCookie === undefined) delete process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE;
+    else process.env.OMNIROUTE_OLLAMA_USAGE_COOKIE = originalOmniCookie;
   }
 });

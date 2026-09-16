@@ -33,12 +33,19 @@ import {
   waitForCooldownAwareRetry,
 } from "../../../src/sse/services/cooldownAwareRetry.ts";
 import { toRetryAfterDisplayValue } from "./validateQuality.ts";
-import { finalizeComboTrace, finishComboTrace } from "./decisionTrace.ts";
+import {
+  finalizeComboTrace,
+  finishComboTrace,
+  getComboTrace,
+  summarizeSkippedTargets,
+} from "./decisionTrace.ts";
 import { isRetryAfterEligibleStatus } from "./unavailableRetryGate.ts";
 import { withQuotaExhaustionClassification } from "./quotaExhaustion.ts";
 import {
   COMBO_LOOP_SAFETY_TIMEOUT_MS,
   COMBO_SAFETY_DRAIN_MS,
+  IDENTICAL_MODEL_ERROR_STREAK,
+  hasIdenticalModelErrorStreak,
   resolveDelayMs,
 } from "./comboPredicates.ts";
 import { evaluateExecuteTargetGates } from "./executeTargetGates.ts";
@@ -139,6 +146,16 @@ export async function dispatchWithCooldownRetry(opts: {
         attemptOrder: state.comboAttemptOrder,
         terminalReason,
         recovery: buildRecoveryHint(terminalReason, retryAfterSeconds),
+        // #12659: surface per-target skip reasons (e.g. persisted_cooldown)
+        // that `excluded` above never captures — only worth the trace lookup
+        // on the diagnostic-heavy terminal reason.
+        skippedTargets:
+          terminalReason === "all_targets_skipped"
+            ? summarizeSkippedTargets(getComboTrace(deps.traceInvocationId)).map((g) => ({
+                reason: g.reason,
+                targets: g.targets,
+              }))
+            : undefined,
       });
 
       let globalResolve: ((res: Response) => void) | null = null;
@@ -181,6 +198,12 @@ export async function dispatchWithCooldownRetry(opts: {
       });
       const runningTasks = new Set<Promise<void>>();
       let anySuccess = false;
+      // Flipped once the last IDENTICAL_MODEL_ERROR_STREAK targets have all
+      // failed with the exact same request-shape error — see comboPredicates.ts.
+      // Stops this set-try's target loop early AND skips the whole-set retry
+      // below, since a malformed request fails identically no matter how many
+      // more times it's replayed against the remaining fallbacks.
+      let comboRequestMalformed = false;
       // #10681: steps already recorded as dispatched (so per-target retries do not
       // duplicate the decision).
       state.dispatchedTargets = new Set<string>();
@@ -236,7 +259,7 @@ export async function dispatchWithCooldownRetry(opts: {
       };
 
       for (let i = 0; i < state.orderedTargets.length; i++) {
-        if (anySuccess || state.comboExpired) break;
+        if (anySuccess || state.comboExpired || comboRequestMalformed) break;
 
         const abortController = new AbortController();
         state.abortControllers.set(i, abortController);
@@ -308,6 +331,18 @@ export async function dispatchWithCooldownRetry(opts: {
             "COMBO",
             `Combo global timeout (${extra.comboTimeoutMs}ms) reached after ` +
               `${i + 1}/${state.orderedTargets.length} targets (${state.recordedAttempts} attempted) — stopping`
+          );
+        }
+
+        if (!anySuccess && !state.comboExpired && hasIdenticalModelErrorStreak(state.comboErrors)) {
+          comboRequestMalformed = true;
+          const last = state.comboErrors[state.comboErrors.length - 1];
+          deps.log.warn(
+            "COMBO",
+            `The last ${IDENTICAL_MODEL_ERROR_STREAK} targets all failed with the identical ` +
+              `request-shape error (status ${last.status}) after ${i + 1}/${state.orderedTargets.length} ` +
+              `targets (${state.recordedAttempts} attempted) — stopping instead of retrying the same ` +
+              `malformed request against remaining fallbacks or set-retries`
           );
         }
       }
@@ -400,8 +435,10 @@ export async function dispatchWithCooldownRetry(opts: {
         });
       }
 
-      // Retry the entire set if more attempts remain
-      if (setTry < extra.maxSetRetries) continue;
+      // Retry the entire set if more attempts remain -- unless the identical-
+      // error streak already proved the request itself is malformed, in which
+      // case a fresh set-try would just reproduce the same streak.
+      if (setTry < extra.maxSetRetries && !comboRequestMalformed) continue;
 
       if (!state.lastStatus && state.recordedAttempts === 0 && extra.comboCooldownWaitEnabled) {
         const circuitOpenWait = resolveCircuitOpenWaitDecision({
