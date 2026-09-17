@@ -207,7 +207,9 @@ const ADVANCED_FIELD_HELP_FALLBACK = {
   failoverBeforeRetry:
     "When enabled, a 429 from the upstream triggers immediate target failover instead of retrying the same URL first.",
   targetTimeoutMs:
-    "Optional combo target timeout. Empty inherits the current request timeout; larger values are capped to that timeout.",
+    "Optional combo target timeout. Empty inherits the current request timeout; larger values are capped to that timeout. For non-streaming requests this bounds the whole generation, not just the wait for the first byte.",
+  comboTimeoutMs:
+    "Total time one request may spend in this combo across all targets and retries. Empty uses the 10-minute safety ceiling. Raise it together with the target timeout for long non-streaming generations.",
   maxSetRetries:
     "Number of times to retry the full target set when every target fails. 0 = no set-level retry.",
   setRetryDelayMs:
@@ -4084,6 +4086,34 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, combo
                           setConfig({
                             ...config,
                             targetTimeoutMs: secondsInputToOptionalMs(e.target.value),
+                          })
+                        }
+                        className="w-full text-xs py-1.5 px-2 rounded border border-black/10 dark:border-white/10 bg-transparent focus:border-primary focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <FieldLabelWithHelp
+                        label={getI18nOrFallback(t, "comboTimeout", "Combo timeout (seconds)")}
+                        help={getI18nOrFallback(
+                          t,
+                          "advancedHelp.comboTimeoutMs",
+                          ADVANCED_FIELD_HELP_FALLBACK.comboTimeoutMs
+                        )}
+                        showHelp={!isExpertMode}
+                        htmlFor="combo-timeout-ms"
+                      />
+                      <input
+                        id="combo-timeout-ms"
+                        type="number"
+                        min="1"
+                        max="86400"
+                        step="1"
+                        value={msToOptionalSecondsInput(config.comboTimeoutMs)}
+                        placeholder={getI18nOrFallback(t, "comboTimeoutDefault", "600")}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            comboTimeoutMs: secondsInputToOptionalMs(e.target.value),
                           })
                         }
                         className="w-full text-xs py-1.5 px-2 rounded border border-black/10 dark:border-white/10 bg-transparent focus:border-primary focus:outline-none"

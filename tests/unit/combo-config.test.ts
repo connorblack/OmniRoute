@@ -385,6 +385,41 @@ test("combo timeout schema rejects values beyond the safe timer limit", () => {
   assert.equal(result.success, false);
 });
 
+test("combo config schema accepts a per-combo comboTimeoutMs above the 10-minute loop ceiling", () => {
+  const parsed = createComboSchema.parse({
+    name: "long-non-streaming",
+    models: ["openai/gpt-4"],
+    config: {
+      targetTimeoutMs: 1_700_000,
+      comboTimeoutMs: "3600000",
+    },
+  });
+
+  assert.equal(parsed.config.comboTimeoutMs, 3_600_000);
+  assert.equal(parsed.config.targetTimeoutMs, 1_700_000);
+});
+
+test("combo defaults schema accepts comboTimeoutMs globally and per provider", () => {
+  const parsed = updateComboDefaultsSchema.parse({
+    comboDefaults: { comboTimeoutMs: 1_800_000 },
+    providerOverrides: { "ollama-cloud": { comboTimeoutMs: 0 } },
+  });
+
+  assert.equal(parsed.comboDefaults.comboTimeoutMs, 1_800_000);
+  assert.equal(parsed.providerOverrides["ollama-cloud"].comboTimeoutMs, 0);
+});
+
+test("combo config schema rejects a negative or unsafe comboTimeoutMs", () => {
+  for (const comboTimeoutMs of [-1, MAX_TIMER_TIMEOUT_MS + 1]) {
+    const result = createComboSchema.safeParse({
+      name: "bad-combo-timeout",
+      models: ["openai/gpt-4"],
+      config: { comboTimeoutMs },
+    });
+    assert.equal(result.success, false);
+  }
+});
+
 test("resolveComboConfig preserves explicit empty handoffProviders overrides", () => {
   const result = resolveComboConfig(
     {

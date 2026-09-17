@@ -471,6 +471,22 @@ export default function ComboDefaultsTab() {
             }
             className="text-sm"
           />
+          <Input
+            label={translateOrFallback(t, "comboTimeout", "Combo timeout (seconds)")}
+            type="number"
+            min={1}
+            max={86400}
+            step={1}
+            value={msToOptionalSecondsInput(comboDefaults.comboTimeoutMs)}
+            placeholder={translateOrFallback(t, "comboTimeoutDefault", "600")}
+            onChange={(e) =>
+              setComboDefaults((prev) => ({
+                ...prev,
+                comboTimeoutMs: secondsInputToOptionalMs(e.target.value),
+              }))
+            }
+            className="text-sm"
+          />
         </div>
         <p className="text-xs text-text-muted">
           {translateOrFallback(

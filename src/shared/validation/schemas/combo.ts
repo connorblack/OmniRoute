@@ -176,6 +176,10 @@ export const comboRuntimeConfigSchema = z
     fallbackDelayMs: z.coerce.number().int().min(0).max(60000).optional(),
     timeoutMs: z.coerce.number().int().min(1000).optional(),
     targetTimeoutMs: z.coerce.number().int().min(0).max(MAX_TIMER_TIMEOUT_MS).optional(),
+    // Total wall-clock budget for one combo request across all targets. 0 or unset falls back to
+    // COMBO_LOOP_SAFETY_TIMEOUT_MS (10 min). Raise it for long non-streaming generations, where the
+    // per-target timer bounds the whole response and a single healthy call can exceed 10 minutes.
+    comboTimeoutMs: z.coerce.number().int().min(0).max(MAX_TIMER_TIMEOUT_MS).optional(),
     concurrencyPerModel: z.coerce.number().int().min(1).max(20).optional(),
     queueTimeoutMs: z.coerce.number().int().min(1000).max(120000).optional(),
     // #3872: pre-cascade semaphore queue depth (round-robin). 0 = fail over immediately.
