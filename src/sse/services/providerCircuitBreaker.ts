@@ -13,7 +13,6 @@ export type ProviderBreakerProfile = {
   useUpstream429BreakerHints?: boolean;
 };
 
-/** The whole-provider circuit breaker, configured from the provider's runtime profile. */
 export async function getProviderCircuitBreaker(
   provider: string,
   profile?: ProviderBreakerProfile | null

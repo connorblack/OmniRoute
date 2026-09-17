@@ -106,8 +106,7 @@ test("runs the Docker browser headed inside a private Xvfb display", () => {
     join(process.cwd(), "docker/chatgpt-web-codex-browser/Dockerfile"),
     "utf8"
   );
-  // xvfb-run blocked forever waiting for Xvfb's SIGUSR1 (8f188f032), so the
-  // image starts Xvfb itself and must keep every step bound to one display.
+  // xvfb-run blocked forever waiting for Xvfb's SIGUSR1 (8f188f032).
   assert.doesNotMatch(dockerfile, /xvfb-run/);
   assert.doesNotMatch(dockerfile, /--headless(?:=|\s)/);
 

@@ -4,11 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// The fork's 177_attempt_phase_timing collided with upstream's
-// 177_provider_connection_synced_models_at and moved to 180. A database that
-// recorded the fork migration as 177 must move that ledger row to 180 and then
-// run upstream's 177, instead of skipping it as already applied.
-
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-migration-177-"));
 const originalDataDir = process.env.DATA_DIR;
 process.env.DATA_DIR = TEST_DATA_DIR;
@@ -48,7 +43,7 @@ test("a fresh install applies both migrations under their own versions", () => {
   assert.ok(columns("call_logs").includes("upstream_request_id"));
 });
 
-test("a database that recorded attempt_phase_timing as 177 is reconciled", () => {
+test("a database that recorded attempt_phase_timing as 177 moves it to 180 and still applies upstream's 177", () => {
   const db = core.getDbInstance();
   db.exec("ALTER TABLE provider_connections DROP COLUMN synced_models_at");
   db.prepare("DELETE FROM _omniroute_migrations WHERE version IN ('177', '180')").run();

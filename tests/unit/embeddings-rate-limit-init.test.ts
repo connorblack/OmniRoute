@@ -4,11 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// A key's saved rate-limit overrides are its real budget. They load lazily, so
-// an embedding request that arrives before any chat request (right after a
-// deploy) must load them before choosing a key; otherwise a billed key is
-// judged by the free-tier table and skipped.
-
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-embed-ratelimit-init-"));
 process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = process.env.API_KEY_SECRET || "embed-ratelimit-init-secret";

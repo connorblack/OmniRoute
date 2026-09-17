@@ -599,8 +599,6 @@ function isSchemaAlreadyApplied(
       // (keyed by version only: a stale "177" here would skip 177_provider_connection_synced_models_at).
       return hasColumn(db, "proxy_logs", "upstream_status");
     case "180":
-      // Renumbered from 177 (collided with 177_provider_connection_synced_models_at
-      // on the release/v3.8.51 merge).
       return (
         [
           "upstream_headers_ms",

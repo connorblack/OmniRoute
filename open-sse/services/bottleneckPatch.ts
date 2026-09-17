@@ -134,8 +134,7 @@ export function applyBottleneckDoExpirePatch(): void {
       ) {
         // Fix: check job status, not compare ID to string "RUNNING"
         const states = job._states;
-        const currentStatus = jobId === undefined ? undefined : states?.jobStatus?.(jobId);
-        if (jobId !== undefined && currentStatus === "RUNNING") {
+        if (jobId !== undefined && states?.jobStatus?.(jobId) === "RUNNING") {
           states?.next?.(jobId);
           console.warn(
             `[bottleneck-patch] doExpire bug triggered: job ${jobId} stuck in RUNNING, ` +

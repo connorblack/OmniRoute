@@ -70,12 +70,6 @@ function tripsProviderBreaker(result: EmbeddingAttempt): boolean {
   );
 }
 
-/**
- * One embedding request with the resilience the chat path applies: the
- * provider circuit breaker, rotation across connections while a failure is
- * account-scoped, one same-account retry for a pre-output transport failure,
- * and a cooldown-aware wait when every connection is rate limited.
- */
 export async function runEmbeddingWithFailover<C, R extends EmbeddingAttempt>(
   select: (excludeConnectionIds: string[]) => Promise<C>,
   run: (credentials: NonNullable<C>) => Promise<R>,

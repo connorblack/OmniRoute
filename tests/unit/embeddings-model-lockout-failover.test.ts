@@ -4,17 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-// A Gemini 429 on an embedding model is a per-model lockout on that connection
-// (hasPerModelQuota). Selection only honors the lockout when it knows the model,
-// and a request must rotate to the next eligible connection instead of
-// returning the first connection's 429 to the client.
-
 const TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-embed-failover-"));
 process.env.DATA_DIR = TEST_DATA_DIR;
 process.env.API_KEY_SECRET = process.env.API_KEY_SECRET || "embed-failover-test-secret";
 
-// proxyFetch captures globalThis.fetch on first import, so the swap point must
-// be installed before any module below loads.
 const realFetch = globalThis.fetch;
 let upstreamFetch: typeof globalThis.fetch = realFetch;
 globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>

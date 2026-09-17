@@ -550,7 +550,7 @@ async function handleUpstreamFailure(
   }).catch(() => {});
   return {
     ...failure(response.status, errorText, stripStaleEncodingHeaders(response.headers)),
-    retryWithNextConnection: await markConnectionFailure(
+    retryWithNextConnection: await coolConnectionAndCheckRotation(
       runtime,
       response.status,
       errorText,
@@ -559,8 +559,7 @@ async function handleUpstreamFailure(
   };
 }
 
-/** Cool the failed connection; true when the request should move to another connection. */
-async function markConnectionFailure(
+async function coolConnectionAndCheckRotation(
   runtime: EmbeddingRuntime,
   status: number,
   errorText: string,
@@ -704,7 +703,7 @@ async function handleEmbeddingException(
   }).catch(() => {});
   return {
     ...failure(502, `Embedding provider error: ${sanitizeErrorMessage(message)}`),
-    retryWithNextConnection: await markConnectionFailure(runtime, 502, message, null),
+    retryWithNextConnection: await coolConnectionAndCheckRotation(runtime, 502, message, null),
   };
 }
 
@@ -712,10 +711,6 @@ function embeddingInputCount(input: unknown): number {
   return Array.isArray(input) ? Math.max(1, input.length) : 1;
 }
 
-/**
- * Gemini's per-model free-tier budget, checked and reserved the same way chat
- * does it. Google bills a batch embedding call as one request per content.
- */
 function reserveGeminiEmbeddingBudget(
   runtime: EmbeddingRuntime
 ): GeminiReservationHandle | EmbeddingFailure | null {

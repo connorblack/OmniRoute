@@ -99,8 +99,6 @@ test("cooled account is skipped on next request — second connection selected",
   try {
     const { createEmbeddingResponse } = await import("../../src/lib/embeddings/service.ts");
 
-    // Upstream returns 402 for conn1's key only → conn1 gets cooled, and the
-    // same request rotates to conn2 instead of surfacing the 402.
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       const key = String((init?.headers as Record<string, string>)?.Authorization ?? "");
       keysUsed.push(key);

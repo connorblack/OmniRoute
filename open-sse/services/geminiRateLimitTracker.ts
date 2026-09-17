@@ -59,7 +59,7 @@ export function canonicalizeGeminiModel(modelId: string | null | undefined): str
   return key;
 }
 
-function lookupLimits(modelId: string | null | undefined): GeminiLimitEntry | null {
+function lookupFreeTierLimits(modelId: string | null | undefined): GeminiLimitEntry | null {
   const key = canonicalizeGeminiModel(modelId);
   if (!key) return null;
   const entry = geminiLimits[key];
@@ -73,37 +73,35 @@ function overrideLimit(value: unknown): number {
   return typeof value === "number" && value > 0 ? value : OVERRIDE_UNLIMITED;
 }
 
-/**
- * The registry holds free-tier limits. A connection with its own rpm/rpd/tpm
- * overrides declares its project's actual limits (a billed tier), so those
- * replace the registry for every model on that connection; an unset field is
- * unlimited.
- */
+function connectionOverrideLimits(connectionId: string): GeminiLimitEntry | null {
+  const overrides = getConnectionRateLimitOverrides(connectionId);
+  if (!overrides || ![overrides.rpm, overrides.rpd, overrides.tpm].some((v) => v > 0)) {
+    return null;
+  }
+  return {
+    rpm: overrideLimit(overrides.rpm),
+    rpd: overrideLimit(overrides.rpd),
+    tpm: overrideLimit(overrides.tpm),
+  };
+}
+
 function resolveLimits(
   connectionId: string,
   modelId: string | null | undefined
 ): GeminiLimitEntry | null {
-  const overrides = getConnectionRateLimitOverrides(connectionId);
-  if (overrides && [overrides.rpm, overrides.rpd, overrides.tpm].some((v) => v > 0)) {
-    return {
-      rpm: overrideLimit(overrides.rpm),
-      rpd: overrideLimit(overrides.rpd),
-      tpm: overrideLimit(overrides.tpm),
-    };
-  }
-  return lookupLimits(modelId);
+  return connectionOverrideLimits(connectionId) ?? lookupFreeTierLimits(modelId);
 }
 
 export function getModelRpd(modelId: string): number {
-  return lookupLimits(modelId)?.rpd ?? -1;
+  return lookupFreeTierLimits(modelId)?.rpd ?? -1;
 }
 
 export function getModelRpm(modelId: string): number {
-  return lookupLimits(modelId)?.rpm ?? -1;
+  return lookupFreeTierLimits(modelId)?.rpm ?? -1;
 }
 
 export function getModelTpm(modelId: string): number {
-  return lookupLimits(modelId)?.tpm ?? -1;
+  return lookupFreeTierLimits(modelId)?.tpm ?? -1;
 }
 
 // ── Ledger ───────────────────────────────────────────────────────────────────

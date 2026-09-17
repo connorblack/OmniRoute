@@ -365,9 +365,7 @@ function trackAsyncOperation<T>(promise: Promise<T>): Promise<T> {
 
 /**
  * Initialize rate limit protection from persisted connection settings.
- * Called once on app startup.
  */
-/** Load persisted rate-limit state once; concurrent callers wait for the same load. */
 export function initializeRateLimits(): Promise<void> {
   initialization ??= loadRateLimits();
   return initialization;
