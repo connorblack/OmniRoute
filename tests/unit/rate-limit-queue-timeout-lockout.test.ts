@@ -59,11 +59,9 @@ test.afterEach(() => {
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-test("RATE_LIMIT_QUEUE_TIMEOUT lockout behaves correctly depending on connection ID header", async () => {
+test("RATE_LIMIT_QUEUE_TIMEOUT leaves model lockout to AUTH with or without the connection header", async () => {
   const provider = "openai";
   const model = "gpt-4";
-
-  // Seed the connection first!
   const connection = await seedConnection(provider);
   const connectionId = connection.id;
 
@@ -78,63 +76,46 @@ test("RATE_LIMIT_QUEUE_TIMEOUT lockout behaves correctly depending on connection
     },
   };
 
-  const logs = createLog();
+  async function runComboTwice(respond: () => Response) {
+    let dispatches = 0;
+    const statuses: number[] = [];
+    for (let i = 0; i < 2; i++) {
+      const res = await handleComboChat({
+        body: {},
+        combo: {
+          name: "test-combo",
+          strategy: "priority",
+          models: [`${provider}/${model}`],
+          config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
+        },
+        handleSingleModel: async () => {
+          dispatches += 1;
+          return respond();
+        },
+        isModelAvailable: async () => true,
+        log: createLog() as any,
+        settings: customSettings,
+        allCombos: null,
+      });
+      statuses.push(res.status);
+    }
+    return { dispatches, statuses };
+  }
 
-  // Scenario 1: Response lacks connection ID header (Current buggy behavior)
-  await handleComboChat({
-    body: {},
-    combo: {
-      name: "test-combo",
-      strategy: "priority",
-      models: [`${provider}/${model}`],
-      config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
-    },
-    handleSingleModel: async () => {
-      return errorResponseWithoutConnectionId(502);
-    },
-    isModelAvailable: async () => true,
-    log: logs as any,
-    settings: customSettings,
-    allCombos: null,
-  });
+  // 2b903bc7c: a missing header used to lock the whole target under "", which
+  // blocked every connection of the provider for the next request.
+  const withoutHeader = await runComboTwice(() => errorResponseWithoutConnectionId(502));
+  assert.equal(isModelLocked(provider, "", model), false, 'no whole-target lock under ""');
+  assert.equal(isModelLocked(provider, connectionId, model), false);
+  assert.deepEqual(withoutHeader.statuses, [502, 502]);
+  assert.equal(withoutHeader.dispatches, 2, "the next request still reaches AUTH");
 
-  // Verify that the model is NOT locked for the actual connection connectionId
-  const lockedForConnBuggy = isModelLocked(provider, connectionId, model);
-  assert.equal(
-    lockedForConnBuggy,
-    false,
-    "Model should not be locked for actual connection when header is missing"
-  );
-
-  // Verify that it got locked under the empty string connectionId ""
-  const lockedForEmptyBuggy = isModelLocked(provider, "", model);
-  assert.equal(
-    lockedForEmptyBuggy,
-    true,
-    "Model is incorrectly locked under empty string connectionId when header is missing"
-  );
-
-  const { clearAllModelLockouts } = await import("../../open-sse/services/accountFallback.ts");
-  clearAllModelLockouts();
-
-  await handleComboChat({
-    body: {},
-    combo: {
-      name: "test-combo",
-      strategy: "priority",
-      models: [`${provider}/${model}`],
-      config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0 },
-    },
-    handleSingleModel: async () => {
-      return errorResponseWithConnectionId(502, connectionId);
-    },
-    isModelAvailable: async () => true,
-    log: logs as any,
-    settings: customSettings,
-    allCombos: null,
-  });
-
-  // Verify that the model IS locked for the actual connection
-  const lockedForConnFixed = isModelLocked(provider, connectionId, model);
-  assert.equal(lockedForConnFixed, true, "Model should be locked for the correct connection ID");
+  // A local queue timeout never reached the upstream; the combo records no lock
+  // for the selected connection either, and AUTH owns any lock it deserves.
+  const withHeader = await runComboTwice(() => errorResponseWithConnectionId(502, connectionId));
+  assert.equal(isModelLocked(provider, connectionId, model), false);
+  assert.equal(getModelLockoutInfo(provider, connectionId, model), null);
+  assert.equal(isModelLocked(provider, "", model), false);
+  assert.deepEqual(withHeader.statuses, [502, 502]);
+  assert.equal(withHeader.dispatches, 2, "the next request still reaches AUTH");
 });
