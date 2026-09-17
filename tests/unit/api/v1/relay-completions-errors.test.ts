@@ -72,6 +72,14 @@ function restoreEnv() {
   globalThis.fetch = ORIGINAL_FETCH;
 }
 
+// Import before installing a fetch mock: the route's first load installs proxyFetch's global
+// fetch patch, which wraps an earlier mock and sends the request to the real network.
+function importRelayRoute() {
+  return import(
+    `../../../../src/app/api/v1/relay/chat/completions/route.ts?case=${Date.now()}-${Math.random()}`
+  );
+}
+
 function setupBifrostEnv() {
   process.env.OMNIROUTE_RELAY_BACKEND = "bifrost";
   process.env.BIFROST_BASE_URL = "http://bifrost.test.local:8080";
@@ -85,6 +93,8 @@ test("relay route: normalizes plain-text Bifrost 404 into JSON error (Issue #1)"
   setupBifrostEnv();
   const relayToken = seedRelayToken(`relay_err_${Date.now()}`);
 
+  const { POST } = await importRelayRoute();
+
   // Bifrost sidecar returns a raw HTML/plain-text non-OK response — the exact
   // "invalid character 'd'" scenario behind client JSON parse failures.
   globalThis.fetch = async () => {
@@ -93,10 +103,6 @@ test("relay route: normalizes plain-text Bifrost 404 into JSON error (Issue #1)"
       headers: { "content-type": "text/html" },
     });
   };
-
-  const { POST } = await import(
-    `../../../../src/app/api/v1/relay/chat/completions/route.ts?case=${Date.now()}-${Math.random()}`
-  );
 
   const req = new Request("http://localhost/api/v1/relay/chat/completions", {
     method: "POST",
@@ -127,16 +133,14 @@ test("relay route: normalizes HTML 502 from Bifrost into JSON error (Issue #1)",
   setupBifrostEnv();
   const relayToken = seedRelayToken(`relay_err_${Date.now()}`);
 
+  const { POST } = await importRelayRoute();
+
   globalThis.fetch = async () => {
     return new Response(
       "<!doctype html><title>502 Bad Gateway</title><pre>invalid character 'd'</pre>",
       { status: 502, headers: { "content-type": "text/html" } }
     );
   };
-
-  const { POST } = await import(
-    `../../../../src/app/api/v1/relay/chat/completions/route.ts?case=${Date.now()}-${Math.random()}`
-  );
 
   const req = new Request("http://localhost/api/v1/relay/chat/completions", {
     method: "POST",
@@ -171,6 +175,8 @@ test("relay route: strips stale upstream content-length before serializing JSON 
   // body. Once the route replaces that body with a freshly-serialized JSON error,
   // a stale content-length copied verbatim onto the outgoing Response would
   // mismatch the real byte length of the new body.
+  const { POST } = await importRelayRoute();
+
   globalThis.fetch = async () => {
     const html = "<html><body>404 page not found, upstream sidecar unreachable</body></html>";
     return new Response(html, {
@@ -184,10 +190,6 @@ test("relay route: strips stale upstream content-length before serializing JSON 
     });
   };
 
-  const { POST } = await import(
-    `../../../../src/app/api/v1/relay/chat/completions/route.ts?case=${Date.now()}-${Math.random()}`
-  );
-
   const req = new Request("http://localhost/api/v1/relay/chat/completions", {
     method: "POST",
     headers: {
@@ -200,8 +202,16 @@ test("relay route: strips stale upstream content-length before serializing JSON 
 
   const res = await POST(req);
   assert.equal(res.status, 404);
-  assert.equal(res.headers.get("content-encoding"), null, "stale content-encoding must be stripped");
-  assert.equal(res.headers.get("transfer-encoding"), null, "stale transfer-encoding must be stripped");
+  assert.equal(
+    res.headers.get("content-encoding"),
+    null,
+    "stale content-encoding must be stripped"
+  );
+  assert.equal(
+    res.headers.get("transfer-encoding"),
+    null,
+    "stale transfer-encoding must be stripped"
+  );
 
   const raw = await res.text();
   const declaredLength = res.headers.get("content-length");
@@ -220,16 +230,14 @@ test("relay route: upstream 401 recorded as analytics error not success (Issue #
   setupBifrostEnv();
   const relayToken = seedRelayToken(`relay_err_${Date.now()}`);
 
+  const { POST } = await importRelayRoute();
+
   globalThis.fetch = async () => {
     return new Response(JSON.stringify({ error: { message: "unauthorized" } }), {
       status: 401,
       headers: { "content-type": "application/json" },
     });
   };
-
-  const { POST } = await import(
-    `../../../../src/app/api/v1/relay/chat/completions/route.ts?case=${Date.now()}-${Math.random()}`
-  );
 
   const req = new Request("http://localhost/api/v1/relay/chat/completions", {
     method: "POST",
