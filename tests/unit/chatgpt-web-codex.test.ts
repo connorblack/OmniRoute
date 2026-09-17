@@ -106,9 +106,27 @@ test("runs the Docker browser headed inside a private Xvfb display", () => {
     join(process.cwd(), "docker/chatgpt-web-codex-browser/Dockerfile"),
     "utf8"
   );
-  assert.match(dockerfile, /xvfb-run/);
+  // xvfb-run blocked forever waiting for Xvfb's SIGUSR1 (8f188f032), so the
+  // image starts Xvfb itself and must keep every step bound to one display.
+  assert.doesNotMatch(dockerfile, /xvfb-run/);
   assert.doesNotMatch(dockerfile, /--headless(?:=|\s)/);
-  assert.match(dockerfile, /-nolisten tcp/);
+
+  const xvfb = /\bXvfb :(\d+) [^&;]*-nolisten tcp[^&;]*&/.exec(dockerfile);
+  assert.ok(xvfb, "Xvfb must run in the background on a numbered display with TCP disabled");
+  const display = xvfb[1];
+
+  const lockCleanup = dockerfile.indexOf(
+    `rm -f /tmp/.X${display}-lock /tmp/.X11-unix/X${display};`
+  );
+  const socketWait = dockerfile.indexOf(`until [ -S /tmp/.X11-unix/X${display} ]`);
+  const chromeLaunch = dockerfile.search(new RegExp(`DISPLAY=:${display} exec \\S*\\$chrome_path`));
+  assert.ok(lockCleanup >= 0, `stale :${display} lock files must be removed before Xvfb starts`);
+  assert.ok(socketWait >= 0, `Chrome must wait for the :${display} X socket`);
+  assert.ok(chromeLaunch >= 0, `Chrome must be exec'd with DISPLAY=:${display}`);
+  assert.ok(
+    lockCleanup < xvfb.index && xvfb.index < socketWait && socketWait < chromeLaunch,
+    "order must be lock cleanup, Xvfb, socket wait, Chrome"
+  );
 });
 
 test("#12024 Docker browser find pattern matches both chrome-linux and chrome-linux64 layouts", () => {
