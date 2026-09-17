@@ -9,7 +9,6 @@ import {
   checkFallbackError,
   decayModelFailureCount,
   hasPerModelQuota,
-  isModelLocked,
   lockModelIfPerModelQuota,
   recordModelLockoutFailure,
   recordProviderFailure,
@@ -22,6 +21,7 @@ import {
   readProseRetryAfter,
 } from "../../utils/error.ts";
 import { recordComboFailure, clearComboFailureTracking } from "./failureTracker.ts";
+import { isTargetModelLocked } from "./targetLockConnections.ts";
 import { buildRecoveryHint } from "./pinRecovery.ts";
 import { formatExhaustedConnectionKey } from "./comboDiagFormat.ts";
 import { recordComboRequest, getComboMetrics } from "../comboMetrics.ts";
@@ -1043,7 +1043,7 @@ export async function executeTargetAttempt(opts: {
         !protectedPriorityTarget &&
         provider &&
         rawModel &&
-        isModelLocked(provider, targetWithConnection.connectionId || "", rawModel)
+        (await isTargetModelLocked(targetWithConnection, provider, rawModel, deps.log))
       ) {
         deps.log.info("COMBO", `Skipping retry for ${modelStr} — model lockout active`);
         // Live incident (log id 1784457764961-73): earliestRetryAfter is already

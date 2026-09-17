@@ -133,6 +133,29 @@ test("markConnectionQuotaExhausted with a Gemini model locks the family, not the
   assert.equal(fallback.isModelLocked("antigravity", connId, "gemini-3.1-flash-lite"), false);
 });
 
+test("markConnectionQuotaExhausted with a model outside both families locks only that model", async () => {
+  fallback.clearAllModelLockouts();
+  const conn = await providersDb.createProviderConnection({
+    provider: "antigravity",
+    authType: "oauth",
+    name: "ag-other-family",
+  });
+  const connId = (conn as { id: string }).id;
+
+  await markConnectionQuotaExhausted(connId, 24 * 60 * 60 * 1000, "gpt-oss-120b-medium");
+
+  assert.equal(
+    providersDb.isConnectionRateLimited(connId),
+    false,
+    "Gemini and Claude quotas on the same account stay selectable"
+  );
+  assert.equal(fallback.isModelLocked("antigravity", connId, "gpt-oss-120b-medium"), true);
+  assert.equal(fallback.isModelLocked("antigravity", connId, "gemini-3.1-flash-lite"), false);
+  assert.equal(fallback.isModelLocked("antigravity", connId, "claude-opus-4-6-thinking"), false);
+  assert.equal(fallback.isModelLocked("agy", connId, "gpt-oss-120b-medium"), false);
+  await providersDb.updateProviderConnection(connId, { isActive: false });
+});
+
 test("Antigravity RPM 429 stays exact-model and does not persist a family cooldown", async () => {
   fallback.clearAllModelLockouts();
   const auth = await import("../../src/sse/services/auth.ts");

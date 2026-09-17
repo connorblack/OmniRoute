@@ -17,7 +17,7 @@ test.after(() => {
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-test("#9204: an Antigravity CLI login is eligible for an agy model request", async () => {
+test("#9204: an Antigravity CLI login serves agy requests and stays out of the antigravity pool", async () => {
   const { connection } = await createConnectionFromAgyToken(
     {
       accessToken: "fresh-access-token",
@@ -37,10 +37,16 @@ test("#9204: an Antigravity CLI login is eligible for an agy model request", asy
   assert.equal(connection.testStatus, "active");
 
   const parsed = parseModel("agy/gemini-2.5-flash");
-  assert.equal(parsed.provider, "antigravity");
+  assert.equal(parsed.provider, "agy");
 
   const credentials = await getProviderCredentials(parsed.provider!, null, null, parsed.model);
-  assert.ok(credentials, "the active Antigravity CLI connection must remain selectable");
+  assert.ok(credentials, "the active Antigravity CLI connection must serve agy requests");
   assert.equal(credentials.connectionId, connection.id);
   assert.equal(credentials.accessToken, "fresh-access-token");
+
+  assert.equal(
+    await getProviderCredentials("antigravity", null, null, parsed.model),
+    null,
+    "an agy login is not an antigravity credential"
+  );
 });

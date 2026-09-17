@@ -3245,11 +3245,6 @@
       "count": 1
     }
   },
-  "tests/unit/combo-quota-share-cooldown-wait.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
-    }
-  },
   "tests/unit/combo-routes-composite-tiers.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 10
@@ -4606,10 +4601,7 @@
   },
   "tests/unit/rate-limit-queue-timeout-lockout.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 4
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
+      "count": 3
     }
   },
   "tests/unit/rateLimitManager-idle-eviction.test.ts": {

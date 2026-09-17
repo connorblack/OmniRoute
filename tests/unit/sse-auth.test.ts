@@ -769,7 +769,8 @@ test("getProviderCredentials refuses a forced pin outside allowedConnections ins
   // policy-allowed pool keeps its constraint — resolution yields no credential instead
   // of silently continuing on another connection. The policy-blocked connection must
   // never be selected, and the allowed one must not be picked behind the caller's back.
-  assert.equal(selected, null);
+  // #13879 names the key policy as the reason, so the chat handler answers 403.
+  assert.deepEqual(selected, { blockedByKeyPolicy: true, blockedCount: 1 });
 });
 
 test("getProviderCredentials retains rate-limited accounts when allowSuppressedConnections is enabled", async () => {
@@ -1180,14 +1181,15 @@ test("getProviderCredentials resolves the nvidia special alias pool", async () =
   assert.equal(selected.connectionId, connection.id);
 });
 
-test("getProviderCredentials resolves the antigravity / agy alias pool", async () => {
+test("getProviderCredentials keeps agy and antigravity pools separate", async () => {
   const connection = await seedConnection("agy", {
-    name: "antigravity-alias-connection",
+    name: "agy-only-connection",
   });
 
-  const selected = await auth.getProviderCredentials("antigravity");
+  const selected = await auth.getProviderCredentials("agy");
 
   assert.equal(selected.connectionId, connection.id);
+  assert.equal(await auth.getProviderCredentials("antigravity"), null);
 });
 
 test("getProviderCredentials shares one Jina token across foundation, reader, and search", async () => {

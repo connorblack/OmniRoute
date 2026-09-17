@@ -88,7 +88,7 @@ test("management detail sanitizes completed error metadata and cached chunks", a
   );
 });
 
-test("usage history endpoint exposes pending counters without raw request details", async () => {
+test("usage history endpoint pages persisted rows without raw in-flight request details", async () => {
   const requestId = usageHistory.trackPendingRequest("model", "provider", "conn-usage", true);
   assert.ok(requestId);
   usageHistory.updatePendingRequestStreamChunks("model", "provider", "conn-usage", {
@@ -97,12 +97,23 @@ test("usage history endpoint exposes pending counters without raw request detail
     client: [],
   });
 
-  const response = await usageHistoryRoute.GET(undefined as unknown as Request);
+  for (const timestamp of ["2026-09-01T00:00:00.000Z", "2026-09-01T00:00:01.000Z"]) {
+    await usageHistory.saveRequestUsage({
+      provider: "provider",
+      model: "model",
+      success: true,
+      tokens: { input: 1, output: 1 },
+      timestamp,
+    });
+  }
+
+  const response = await usageHistoryRoute.GET(
+    new Request("http://localhost/api/usage/history?limit=1")
+  );
   assert.equal(response.status, 200);
-  const body = (await response.json()) as {
-    pending?: { byModel?: Record<string, number>; details?: unknown };
-  };
-  assert.equal(body.pending?.byModel?.["model (provider)"], 1);
-  assert.equal("details" in (body.pending ?? {}), false);
+  const body = (await response.json()) as { items?: unknown[]; nextCursor?: unknown };
+  assert.deepEqual(Object.keys(body).sort(), ["items", "nextCursor"]);
+  assert.equal(body.items?.length, 1);
+  assert.equal(typeof body.nextCursor, "string");
   assert.doesNotMatch(JSON.stringify(body), /management-cache-secret|srv\/private/i);
 });
