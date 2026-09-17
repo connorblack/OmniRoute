@@ -602,7 +602,7 @@ export default function ReasoningRoutingRules({
                   <p className="text-xs text-text-muted">{e("then")}</p>
                   <p className="mt-1 break-all text-text-main">{targetLabel(rule)}</p>
                   <p className="mt-1 text-text-muted">
-                    {e("effort." + rule.effortMode)}
+                    {e(`effort.${rule.effortMode}`)}
                     {rule.effortMode !== "inherit" ? ": " + rule.targetEffort : ""}
                   </p>
                 </div>
@@ -611,7 +611,7 @@ export default function ReasoningRoutingRules({
                 <p className="mt-3 break-words text-sm text-text-muted">{rule.description}</p>
               )}
               <p className="mt-3 text-xs text-text-muted">
-                {t("scope." + rule.scope)}
+                {t(`scope.${rule.scope}`)}
                 {rule.apiKeyId
                   ? " · " + (keys.find((key) => key.id === rule.apiKeyId)?.name || e("missingKey"))
                   : ""}
@@ -800,7 +800,7 @@ export default function ReasoningRoutingRules({
                       }
                       options={["inherit", "default", "force"].map((value) => ({
                         value,
-                        label: e("effort." + value),
+                        label: e(`effort.${value}`),
                       }))}
                     />
                   </div>
@@ -841,7 +841,7 @@ export default function ReasoningRoutingRules({
                       />
                     </div>
                   )}
-                  <p className="text-sm text-text-muted">{e("effortHint." + form.effortMode)}</p>
+                  <p className="text-sm text-text-muted">{e(`effortHint.${form.effortMode}`)}</p>
                   {capabilityWarning && (
                     <p role="status" className="text-sm text-amber-600 dark:text-amber-400">
                       {capabilityWarning}
@@ -888,7 +888,7 @@ export default function ReasoningRoutingRules({
                       }
                       options={["preserve", "remove", "set"].map((value) => ({
                         value,
-                        label: t("budget." + value),
+                        label: t(`budget.${value}`),
                       }))}
                     />
                     {form.budgetAction === "set" && (
@@ -918,7 +918,7 @@ export default function ReasoningRoutingRules({
                         : form.targetModel || "—"}
                   </p>
                   <p className="mt-1 text-text-muted">
-                    {e("effort." + form.effortMode)}
+                    {e(`effort.${form.effortMode}`)}
                     {form.effortMode !== "inherit" ? ": " + form.targetEffort : ""}
                   </p>
                   <p className="mt-2 text-xs text-text-muted">{e("draftNotice")}</p>
