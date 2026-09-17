@@ -26,11 +26,8 @@ import path from "node:path";
 // console-only; tests that cover file logging explicitly set APP_LOG_TO_FILE themselves.
 process.env.APP_LOG_TO_FILE ||= "false";
 
-if (!process.env.DATA_DIR) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-test-"));
-  process.env.DATA_DIR = dir;
-
-  // Best-effort cleanup so a long suite run does not leak hundreds of temp DBs.
+// Best-effort cleanup so a long suite run does not leak hundreds of temp dirs.
+function removeOnExit(dir: string): void {
   process.on("exit", () => {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -38,6 +35,55 @@ if (!process.env.DATA_DIR) {
       // ignore — the OS reaps its temp dir eventually.
     }
   });
+}
+
+if (!process.env.DATA_DIR) {
+  process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-test-"));
+  removeOnExit(process.env.DATA_DIR);
+}
+
+// Developer-machine guard: unit tests must pass the same on a contributor's laptop as on
+// a clean CI runner. A contributor's shell carries real provider keys, an OmniRoute
+// client key and config-dir relocations, and their home holds real CLI configs
+// (~/.config/opencode/opencode.jsonc). Product code reads all of these, so unit tests
+// asserting "no provider configured" or "default config path" failed only locally.
+// Each unit-test process gets an empty temp HOME and none of those variables; a test that
+// needs one sets it after this module has run. Integration and live suites keep the
+// ambient environment because they opt into real credentials (OMNIROUTE_API_KEY) on purpose.
+const CONFIG_HOME_VARIABLES = [
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "XDG_CACHE_HOME",
+  "CLI_CONFIG_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "CLIPROXYAPI_CONFIG_DIR",
+  "CODEX_CHATGPT_WEB_HOME",
+  "CODEX_HOME",
+  "DEVIN_AGENTIC_HOME",
+  "GROK_HOME",
+  "HERMES_HOME",
+  "QODER_CLI_CONFIG_DIR",
+  "QWEN_HOME",
+];
+const CREDENTIAL_VARIABLE = /_API_KEY$/;
+const UNIT_TESTS_DIR = `${path.sep}tests${path.sep}unit${path.sep}`;
+
+const runsUnitTests = process.argv
+  .slice(1)
+  .some((arg) => path.resolve(arg).includes(UNIT_TESTS_DIR));
+
+if (runsUnitTests) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-test-home-"));
+  process.env.HOME = home;
+  if (process.platform === "win32") process.env.USERPROFILE = home;
+  removeOnExit(home);
+
+  for (const name of Object.keys(process.env)) {
+    if (CONFIG_HOME_VARIABLES.includes(name) || CREDENTIAL_VARIABLE.test(name)) {
+      delete process.env[name];
+    }
+  }
 }
 
 // System-trust guard: the suite must NEVER mutate the OS trust store. On a

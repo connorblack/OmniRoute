@@ -54,7 +54,7 @@ function preserveErrorForSizeLimit(error: unknown): unknown {
   if (error === null || error === undefined) return null;
   let serialized: string;
   try {
-    serialized = typeof error === "string" ? error : JSON.stringify(error) ?? String(error);
+    serialized = typeof error === "string" ? error : (JSON.stringify(error) ?? String(error));
   } catch {
     // A circular or unserializable error must not take the whole artifact down.
     serialized = String(error);
@@ -331,7 +331,24 @@ export function readCallArtifact(relativePath: string | null): {
   }
 }
 
-export function deleteCallArtifact(relativePath: string | null, baseDir = CALL_LOGS_DIR): boolean {
+export function removeDirIfEmpty(dirPath: string): void {
+  try {
+    fs.rmdirSync(dirPath);
+  } catch {
+    // Directory is non-empty or already gone.
+  }
+}
+
+/**
+ * `pruneEmptyParent: false` is for callers that are still reading the parent
+ * directory: on macOS APFS an rmdir attempt on a directory being read makes
+ * readdir skip entries that still exist.
+ */
+export function deleteCallArtifact(
+  relativePath: string | null,
+  baseDir = CALL_LOGS_DIR,
+  { pruneEmptyParent = true }: { pruneEmptyParent?: boolean } = {}
+): boolean {
   if (!baseDir || !relativePath) return false;
 
   try {
@@ -340,13 +357,7 @@ export function deleteCallArtifact(relativePath: string | null, baseDir = CALL_L
     if (!fs.existsSync(absPath)) return false;
     fs.rmSync(absPath, { force: true });
     const parentDir = path.dirname(absPath);
-    if (parentDir !== resolvedBaseDir) {
-      try {
-        fs.rmdirSync(parentDir);
-      } catch {
-        // Directory is non-empty or already gone.
-      }
-    }
+    if (pruneEmptyParent && parentDir !== resolvedBaseDir) removeDirIfEmpty(parentDir);
     return true;
   } catch {
     return false;
