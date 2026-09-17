@@ -353,6 +353,10 @@ export function msUntilGeminiDailyReset(nowMs: number = Date.now()): number {
   return nextDailyResetAtMs(PACIFIC_TZ, 0, nowMs) - nowMs;
 }
 
+function earliest(times: number[]): number {
+  return times.reduce((min, t) => (t < min ? t : min), Infinity);
+}
+
 export function getGeminiBudgetBlock(
   connectionId: string | null | undefined,
   model: string | null | undefined,
@@ -380,8 +384,10 @@ export function getGeminiBudgetBlock(
   if (limits.rpm > 0) {
     const used = entry.requestTimes.length + inFlight;
     if (used >= limits.rpm) {
-      const times = [...entry.requestTimes, ...[...entry.inFlight.values()].map((r) => r.at)];
-      const oldest = Math.min(...times);
+      const oldest = Math.min(
+        earliest(entry.requestTimes),
+        earliest(Array.from(entry.inFlight.values(), (r) => r.at))
+      );
       return { window: "rpm", remainingMs: Math.max(0, oldest + WINDOW_MS - nowMs) };
     }
   }
@@ -389,7 +395,7 @@ export function getGeminiBudgetBlock(
   if (limits.tpm > 0) {
     const used = entry.tokenEvents.reduce((sum, e) => sum + e.n, 0);
     if (used >= limits.tpm) {
-      const oldest = Math.min(...entry.tokenEvents.map((e) => e.at));
+      const oldest = earliest(entry.tokenEvents.map((e) => e.at));
       return { window: "tpm", remainingMs: Math.max(0, oldest + WINDOW_MS - nowMs) };
     }
   }

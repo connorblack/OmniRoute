@@ -73,3 +73,27 @@ test("maxConcurrent alone does not replace the free-tier registry", () => {
   settleBatch("free", 100, FIXED_NOW);
   assert.equal(getGeminiBudgetBlock("free", EMBED, FIXED_NOW + 1)?.window, "rpm");
 });
+
+test("rpm and tpm windows longer than the call-argument limit still report their reset", () => {
+  const rows = 300_000;
+  setGeminiLedgerSeedSourceForTests(() =>
+    Array.from({ length: rows }, () => ({
+      connectionId: "bulk",
+      model: EMBED,
+      status: 200,
+      timestampMs: FIXED_NOW - 1_000,
+      tokensIn: 1,
+      tokensOut: 0,
+    }))
+  );
+  setConnectionRateLimitOverrides("bulk", { rpm: rows });
+  assert.deepEqual(getGeminiBudgetBlock("bulk", EMBED, FIXED_NOW), {
+    window: "rpm",
+    remainingMs: 59_000,
+  });
+  setConnectionRateLimitOverrides("bulk", { rpm: rows + 1, tpm: rows });
+  assert.deepEqual(getGeminiBudgetBlock("bulk", EMBED, FIXED_NOW), {
+    window: "tpm",
+    remainingMs: 59_000,
+  });
+});
