@@ -571,6 +571,35 @@ test("pinned connectionId outside apiKeyAllowedConnectionIds is dropped", async 
   assert.deepEqual(ordered, []);
 });
 
+test("steps pinned or allowlisted to a provider without a quota fetcher stay in the order", async () => {
+  const pinned = `nv-pin-${randomUUID()}`;
+  const allowed = `nv-allow-${randomUUID()}`;
+  const agyConn = `agy-${randomUUID()}`;
+  registerQuotaFetcher("agy", async () => quotaAt(0.2));
+  seedConnection("nvidia", allowed);
+  const allowlisted = {
+    ...makeTarget("nvidia", allowed, "z-ai/glm-5.3-flash"),
+    stepId: "step-allowlisted",
+    executionKey: "nvidia/z-ai/glm-5.3-flash#allowlisted",
+    connectionId: null,
+    allowedConnectionIds: [allowed],
+  };
+  _setSecureRandomFloatSource(() => 0);
+
+  const ordered = await orderTargetsByQuotaWeighted(
+    [makeTarget("nvidia", pinned, "z-ai/glm-5.3-flash"), allowlisted, makeTarget("agy", agyConn)],
+    "pool/extractor",
+    {},
+    { warn() {} },
+    null
+  );
+
+  assert.deepEqual(
+    ordered.map((t) => t.connectionId),
+    [pinned, allowed, agyConn]
+  );
+});
+
 test("floor=100 puts remaining in (0,100] into B", async () => {
   const provider = "agy";
   const low = `low-${randomUUID()}`;
