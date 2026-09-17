@@ -66,13 +66,9 @@ test("health --json returns 0 when server responds", async () => {
 
   await withServerFetch(mockFetch, async () => {
     const { runHealthCommand } = await import("../../bin/cli/commands/health.mjs");
-    const lines: string[] = [];
-    const originalLog = console.log;
-    console.log = (msg: string) => lines.push(msg);
-    const result = await runHealthCommand({ json: true });
-    console.log = originalLog;
+    const { output, result } = await captureStdout(() => runHealthCommand({ json: true }));
     assert.equal(result, 0);
-    const parsed = JSON.parse(lines.join("\n"));
+    const parsed = JSON.parse(output);
     assert.equal(parsed.status, "ok");
   });
 });
