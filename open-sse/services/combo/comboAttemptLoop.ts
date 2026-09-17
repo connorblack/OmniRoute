@@ -4,7 +4,7 @@
  *
  * @internal — not part of the public combo.ts barrel.
  */
-import { formatRetryAfter, getModelLockoutInfo } from "../accountFallback.ts";
+import { formatRetryAfter, getSoonestModelLockoutInfo } from "../accountFallback.ts";
 import {
   errorResponse,
   errorResponseWithComboDiagnostics,
@@ -51,6 +51,7 @@ import {
 import { evaluateExecuteTargetGates } from "./executeTargetGates.ts";
 import { executeTargetAttempt } from "./executeTargetAttempt.ts";
 import type { AttemptLoopDeps, AttemptLoopState, ExecuteTargetResult } from "./attemptLoopTypes.ts";
+import { getTargetLockConnectionIds } from "./targetLockConnections.ts";
 
 function resolveMaxParallelTargets(value: unknown, targetCount: number): number {
   const parsed = Number(value);
@@ -538,6 +539,14 @@ export async function dispatchWithCooldownRetry(opts: {
       // SHORT upstream retry-after. Model lockouts are recorded for all strategies,
       // so the real reason is always available.
       if (extra.comboCooldownWaitEnabled && state.earliestRetryAfter) {
+        const lockConnectionIds = new Map<object, string[]>(
+          await Promise.all(
+            state.orderedTargets.map(
+              async (target) =>
+                [target, await getTargetLockConnectionIds(target, deps.log)] as const
+            )
+          )
+        );
         const decision: ResolveComboCooldownDecisionResult = resolveComboCooldownWaitDecision({
           targets: state.orderedTargets,
           earliestRetryAfter: state.earliestRetryAfter,
@@ -548,10 +557,14 @@ export async function dispatchWithCooldownRetry(opts: {
           // single-model/multi-account (so this is identical to the previous
           // state.orderedTargets[0] behavior), but heterogeneous combos carry a
           // different model per target.
-          lookupLock: (provider, connectionId, target) => {
+          lookupLock: (provider, _connectionId, target) => {
             const rawModel = parseModel(target?.modelStr ?? "").model || "";
             if (!rawModel) return null;
-            return getModelLockoutInfo(provider, connectionId, rawModel);
+            return getSoonestModelLockoutInfo(
+              provider,
+              lockConnectionIds.get(target) ?? [],
+              rawModel
+            );
           },
           computeWaitMs: (retryAfter) => computeClosestRetryAfter(retryAfter).waitMs,
         });

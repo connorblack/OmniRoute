@@ -25,6 +25,10 @@
  * OPPOSITE (immediate propagation, no wait) — that assertion is now testing
  * dead behavior, so it was rewritten to assert the new intended behavior
  * instead of being deleted or weakened.
+ *
+ * Locks come from AUTH, as in production: the single-model stub
+ * (tests/unit/_helpers/authBackedComboHandler.ts) records each upstream failure
+ * through markAccountUnavailable against the connection that served it.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -38,7 +42,10 @@ process.env.API_KEY_SECRET = "test-combo-cooldown-wait-timing-secret";
 
 const core = await import("../../../src/lib/db/core.ts");
 const { handleComboChat } = await import("../../../open-sse/services/combo.ts");
-const { clearAllModelLockouts } = await import("../../../open-sse/services/accountFallback.ts");
+const { clearAllModelLockouts, getModelLockoutInfo } =
+  await import("../../../open-sse/services/accountFallback.ts");
+const { authBackedHandler, okResponse, rateLimitResponse } =
+  await import("../_helpers/authBackedComboHandler.ts");
 
 function createLog() {
   return { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
@@ -58,24 +65,6 @@ function shortModelLockoutSettings() {
       useExponentialBackoff: false,
     },
   };
-}
-
-function jsonResponse(status: number, body: Record<string, unknown>) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function rateLimitResponse(status: number, retryAfterMs: number = RETRY_AFTER_MS) {
-  return jsonResponse(status, {
-    error: { message: `rate limited (${status})` },
-    retryAfter: new Date(Date.now() + retryAfterMs).toISOString(),
-  });
-}
-
-function okResponse() {
-  return jsonResponse(200, { id: "ok", choices: [{ message: { content: "recovered" } }] });
 }
 
 function comboOf(strategy: string) {
@@ -109,17 +98,15 @@ test.after(async () => {
 });
 
 test("quota-share: 403 quota_exhausted → NO wait, error propagated immediately", async () => {
-  let calls = 0;
-  const handleSingleModel = async () => {
-    calls += 1;
-    return rateLimitResponse(403);
-  };
+  const auth = await authBackedHandler(["openai"], () =>
+    rateLimitResponse(RETRY_AFTER_MS, { status: 403 })
+  );
 
   const startedAt = Date.now();
   const res = await handleComboChat({
     body: { model: "openai/gpt-4" },
     combo: comboOf("quota-share"),
-    handleSingleModel,
+    handleSingleModel: auth.handleSingleModel,
     isModelAvailable: async () => true,
     log: createLog() as never,
     settings: shortModelLockoutSettings(),
@@ -129,15 +116,11 @@ test("quota-share: 403 quota_exhausted → NO wait, error propagated immediately
 
   assert.notEqual(res.status, 200, "quota_exhausted must not be retried into a success");
   // The real signal that the cooldown wait did NOT fire: a single upstream
-  // dispatch (no redispatch). The 403 lock cooldown is multi-second, so the
-  // wait — had it fired — would dominate the elapsed time; assert we stayed far
-  // below that (loose bound; the first combo dispatch pays DB/import overhead).
-  assert.equal(calls, 1, "quota_exhausted must NOT trigger a wait+redispatch");
-  // Widened from 1500ms (#6803): the primary signal is calls===1 above (no
-  // redispatch happened at all); this ceiling is a secondary sanity check
-  // that we didn't accidentally wait out a real (multi-second-to-hours)
-  // quota_exhausted lock, so a generous bound still catches a real
-  // regression while tolerating CI-runner DB/import contention.
+  // dispatch (no redispatch).
+  assert.equal(auth.dispatches.length, 1, "quota_exhausted must NOT trigger a wait+redispatch");
+  // Widened from 1500ms (#6803): the primary signal is the single dispatch
+  // above; this ceiling is a secondary sanity check that we didn't wait out a
+  // real quota_exhausted lock, generous enough for CI-runner contention.
   assert.ok(
     elapsed < 10000,
     `quota_exhausted must not wait out a cooldown, but ${elapsed}ms elapsed`
@@ -145,20 +128,17 @@ test("quota-share: 403 quota_exhausted → NO wait, error propagated immediately
 });
 
 test("non quota-share (priority): short 429 cooldown → waits and re-dispatches (2nd pass 200)", async () => {
-  let calls = 0;
-  const handleSingleModel = async () => {
-    calls += 1;
-    // 1st dispatch: transient 429 with a short retry-after hint. 2nd dispatch
-    // (after the universal cooldown wait): success. Exercises the shared
-    // resolveComboCooldownWaitDecision path (real model-lockout reason).
-    return calls === 1 ? rateLimitResponse(429) : okResponse();
-  };
+  // Exercises the shared resolveComboCooldownWaitDecision path with the lock
+  // reason AUTH recorded.
+  const auth = await authBackedHandler(["openai"], (_modelStr, callsForModel) =>
+    callsForModel === 1 ? rateLimitResponse(RETRY_AFTER_MS) : okResponse()
+  );
 
   const startedAt = Date.now();
   const res = await handleComboChat({
     body: { model: "openai/gpt-4" },
     combo: { ...comboOf("priority"), name: "priority-combo" },
-    handleSingleModel,
+    handleSingleModel: auth.handleSingleModel,
     isModelAvailable: async () => true,
     log: createLog() as never,
     settings: shortModelLockoutSettings(),
@@ -167,7 +147,7 @@ test("non quota-share (priority): short 429 cooldown → waits and re-dispatches
   const elapsed = Date.now() - startedAt;
 
   assert.equal(res.status, 200, "expected the retried dispatch to succeed with 200");
-  assert.equal(calls, 2, "expected exactly one wait+redispatch (2 upstream calls)");
+  assert.equal(auth.upstreamCalls.length, 2, "expected exactly one wait+redispatch");
   assert.ok(
     elapsed >= RETRY_AFTER_MS - 50,
     `expected to have waited out the cooldown, only ${elapsed}ms elapsed`
@@ -181,77 +161,70 @@ test("non quota-share (priority): a quota_exhausted lock drives the decision wit
   //
   // Barrier 1 = the reason allow-list. Barrier 2 = the maxWaitMs ceiling.
   // This scenario is engineered so ONLY barrier 1 can stop the wait:
-  //   - modelLockout.errorCodes is [403] ONLY, so model-a's 429 contributes a
-  //     retry-after hint (opens the cooldown-wait decision) WITHOUT recording a
-  //     competing `rate_limit` lock.
-  //   - model-b's 403 records the only lock in play: `quota_exhausted`. It is
-  //     therefore the lock resolveComboCooldownWaitDecision picks, so its reason
-  //     is what drives the decision.
+  //   - AUTH persists the openai 429 as connection state, so it contributes a
+  //     retry-after hint (opens the cooldown-wait decision) WITHOUT a
+  //     competing model lock.
+  //   - The Gemini 429 names a spent quota, so AUTH records the only model
+  //     lock in play: `quota_exhausted`, shortened to the upstream hint. It is
+  //     the lock resolveComboCooldownWaitDecision picks.
   //   - The resulting wait is SHORT (well under maxWaitMs=5000), so barrier 2
   //     lets it through. Only the allow-list can reject it.
-  //
-  // With the reason hardcoded to "rate_limit", barrier 1 is gone and this exact
-  // input waits + redispatches against a quota-exhausted model — verified: the
-  // same test yields 6 dispatches.
-  const calls: string[] = [];
-  const handleSingleModel = async (_body: unknown, modelStr: string) => {
-    calls.push(modelStr);
-    return modelStr === "openai/gpt-4" ? rateLimitResponse(429) : rateLimitResponse(403);
-  };
+  const QUOTA_RETRY_AFTER_MS = 1500;
+  const auth = await authBackedHandler(
+    ["openai", "gemini"],
+    (modelStr) =>
+      modelStr === "openai/gpt-4"
+        ? rateLimitResponse(RETRY_AFTER_MS)
+        : rateLimitResponse(QUOTA_RETRY_AFTER_MS, {
+            message: "Quota exceeded for quota metric 'Generate Content API requests per day'",
+          }),
+    (modelStr) => ({ persistUnavailableState: modelStr === "openai/gpt-4" })
+  );
 
   const res = await handleComboChat({
     body: { model: "openai/gpt-4" },
     combo: {
       name: "priority-quota-exhausted-short-wait",
       strategy: "priority",
-      models: ["openai/gpt-4", "anthropic/claude-3-5-sonnet"],
+      models: ["openai/gpt-4", "gemini/gemini-2.5-flash"],
       config: { maxRetries: 0, retryDelayMs: 0, fallbackDelayMs: 0, maxSetRetries: 0 },
     },
-    handleSingleModel,
+    handleSingleModel: auth.handleSingleModel,
     isModelAvailable: async () => true,
     log: createLog() as never,
-    settings: {
-      modelLockout: {
-        ...shortModelLockoutSettings().modelLockout,
-        // 429 deliberately excluded: only the 403 records a lock, so the
-        // quota_exhausted reason is unambiguously the one under test.
-        errorCodes: [403],
-      },
-    },
+    settings: shortModelLockoutSettings(),
     allCombos: null,
   });
 
-  // #10501: mixed 429 (rate_limit) + 403 (quota_exhausted) is a heterogeneous
-  // failure class, so resolveComboTerminalStatus normalizes to 502 instead of
-  // last-wins 403. The security invariant is still the allow-list rejecting
-  // the wait — proved by the dispatch list below, not by the HTTP status.
-  assert.equal(
-    res.status,
-    502,
-    "heterogeneous 429+403 must aggregate to 502; wait must not redispatch"
+  const openaiLock = getModelLockoutInfo("openai", auth.connectionIds.get("openai")!, "gpt-4");
+  const geminiLock = getModelLockoutInfo(
+    "gemini",
+    auth.connectionIds.get("gemini")!,
+    "gemini-2.5-flash"
   );
-  // Deterministic proof (no wall-clock dependency, so it cannot flake under
-  // CI-runner contention): each target is dispatched EXACTLY ONCE. Had the wait
-  // fired, the whole set loop would re-run — maxAttempts=2 within the 8s budget
-  // produces 6 dispatches, not 2.
+  assert.equal(openaiLock, null, "the openai 429 must not compete with a model lock");
+  assert.equal(geminiLock?.reason, "quota_exhausted");
+  assert.ok(
+    (geminiLock?.remainingMs ?? Infinity) < 5000,
+    "the quota_exhausted lock is short enough to pass the maxWaitMs ceiling"
+  );
+  assert.notEqual(res.status, 200, "a quota_exhausted lock must not be waited into a success");
+  // Deterministic proof (no wall-clock dependency): each target is dispatched
+  // EXACTLY ONCE. Had the wait fired, the whole set loop would re-run.
   assert.deepEqual(
-    calls,
-    ["openai/gpt-4", "anthropic/claude-3-5-sonnet"],
+    auth.dispatches,
+    ["openai/gpt-4", "gemini/gemini-2.5-flash"],
     "a quota_exhausted lock must NOT trigger a wait+redispatch, even when the wait would be short enough to clear the maxWaitMs ceiling"
   );
 });
 
 test("non quota-share (priority) with comboCooldownWait disabled → 429 propagated, NO wait", async () => {
-  let calls = 0;
-  const handleSingleModel = async () => {
-    calls += 1;
-    return rateLimitResponse(429);
-  };
+  const auth = await authBackedHandler(["openai"], () => rateLimitResponse(RETRY_AFTER_MS));
 
   const res = await handleComboChat({
     body: { model: "openai/gpt-4" },
     combo: { ...comboOf("priority"), name: "priority-combo-disabled" },
-    handleSingleModel,
+    handleSingleModel: auth.handleSingleModel,
     isModelAvailable: async () => true,
     log: createLog() as never,
     settings: {
@@ -262,5 +235,5 @@ test("non quota-share (priority) with comboCooldownWait disabled → 429 propaga
   });
 
   assert.equal(res.status, 429, "disabled feature must propagate the 429 unchanged");
-  assert.equal(calls, 1, "disabled feature must NOT wait+redispatch");
+  assert.equal(auth.dispatches.length, 1, "disabled feature must NOT wait+redispatch");
 });

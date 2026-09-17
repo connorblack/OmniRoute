@@ -47,12 +47,14 @@ export const COMBO_COOLDOWN_NON_RETRYABLE_REASONS: ReadonlySet<string> = new Set
  * Reasons recognised as short/transient and therefore eligible for a wait. We
  * use an allow-list (rather than "anything not in the deny-list") so an unknown
  * or empty reason fails closed — only an explicit transient reason qualifies.
- * These match the model-lockout reasons produced by classifyLockoutReason /
- * recordModelLockoutFailure for rate-limit-class failures.
+ * These match the model-lockout reasons AUTH records for rate-limit-class
+ * failures (checkFallbackError's RateLimitReason, the per-model-quota branch)
+ * and the RPM/TPM Gemini budget block.
  */
 export const COMBO_COOLDOWN_RETRYABLE_REASONS: ReadonlySet<string> = new Set([
   "rate_limit",
   "rate_limited",
+  "rate_limit_exceeded",
   "transient",
   "overloaded",
   "server_error",
@@ -163,8 +165,9 @@ export interface ResolveComboCooldownDecisionInput {
   budgetLeftMs: number;
   settings: ComboCooldownWaitSettings;
   /**
-   * Per-target lock lookup (getModelLockoutInfo). Receives the target itself so
-   * the caller can key the lookup on that target's own model.
+   * Per-target lock lookup. Receives the target itself so the caller can key the
+   * lookup on that target's own model. `connectionId` is "" for an unpinned
+   * target, whose lock AUTH recorded under whichever connection served it.
    */
   lookupLock: (
     provider: string,

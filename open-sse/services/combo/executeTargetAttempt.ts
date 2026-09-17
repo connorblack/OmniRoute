@@ -22,6 +22,7 @@ import {
   readProseRetryAfter,
 } from "../../utils/error.ts";
 import { recordComboFailure, clearComboFailureTracking } from "./failureTracker.ts";
+import { getTargetLockConnectionIds } from "./targetLockConnections.ts";
 import { buildRecoveryHint } from "./pinRecovery.ts";
 import { formatExhaustedConnectionKey } from "./comboDiagFormat.ts";
 import { recordComboRequest, getComboMetrics } from "../comboMetrics.ts";
@@ -1043,7 +1044,9 @@ export async function executeTargetAttempt(opts: {
         !protectedPriorityTarget &&
         provider &&
         rawModel &&
-        isModelLocked(provider, targetWithConnection.connectionId || "", rawModel)
+        (await getTargetLockConnectionIds(targetWithConnection, deps.log)).some((connectionId) =>
+          isModelLocked(provider, connectionId, rawModel)
+        )
       ) {
         deps.log.info("COMBO", `Skipping retry for ${modelStr} — model lockout active`);
         // Live incident (log id 1784457764961-73): earliestRetryAfter is already

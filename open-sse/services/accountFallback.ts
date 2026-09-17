@@ -1235,6 +1235,22 @@ export function getModelLockoutInfo(
   return null;
 }
 
+/** Soonest-expiring model lock across connections, each read the way AUTH selection reads it. */
+export function getSoonestModelLockoutInfo(
+  provider: string,
+  connectionIds: Iterable<string>,
+  model: string | null | undefined
+) {
+  let soonest: ReturnType<typeof getModelLockoutInfo> = null;
+  for (const connectionId of connectionIds) {
+    const info = getModelLockoutInfo(provider, connectionId, model);
+    if (info && info.remainingMs > 0 && (!soonest || info.remainingMs < soonest.remainingMs)) {
+      soonest = info;
+    }
+  }
+  return soonest;
+}
+
 export type ModelLockoutInfo = {
   scope: ModelLockScope["kind"];
   provider: string;
