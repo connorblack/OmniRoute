@@ -371,18 +371,35 @@ test("runAuthzPipeline allows dashboard sessions to read model catalog aliases",
   assert.equal(response.headers.get("x-omniroute-route-class"), "CLIENT_API");
 });
 
-test("runAuthzPipeline allows dashboard sessions to reach DB health management API", async () => {
+test("runAuthzPipeline allows dashboard sessions to reach DB health management API from the stamped loopback peer only (#13717)", async () => {
   await forceAuthRequired();
+  process.env.OMNIROUTE_PEER_STAMP_TOKEN = "pipeline-test-peer-stamp-token";
 
-  const response = await pipeline.runAuthzPipeline(
+  const local = await pipeline.runAuthzPipeline(
     request("http://localhost/api/db/health", {
-      headers: { cookie: await dashboardCookie() },
+      headers: {
+        cookie: await dashboardCookie(),
+        "x-omniroute-peer-ip": "pipeline-test-peer-stamp-token|127.0.0.1",
+        "x-omniroute-via-proxy": "pipeline-test-peer-stamp-token|0",
+      },
     }),
     { enforce: true }
   );
+  assert.equal(local.status, 200);
+  assert.equal(local.headers.get("x-omniroute-route-class"), "MANAGEMENT");
 
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-omniroute-route-class"), "MANAGEMENT");
+  const remote = await pipeline.runAuthzPipeline(
+    request("http://localhost/api/db/health", {
+      headers: {
+        cookie: await dashboardCookie(),
+        "x-omniroute-peer-ip": "pipeline-test-peer-stamp-token|203.0.113.9",
+        "x-omniroute-via-proxy": "pipeline-test-peer-stamp-token|0",
+      },
+    }),
+    { enforce: true }
+  );
+  assert.equal(remote.status, 403);
+  assert.equal((await remote.json()).error.code, "LOCAL_ONLY");
 });
 
 test("runAuthzPipeline accepts dashboard mutations from configured public origin", async () => {
