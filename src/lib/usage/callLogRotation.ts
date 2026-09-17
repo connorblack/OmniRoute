@@ -17,6 +17,7 @@ import {
 import {
   CALL_LOGS_DIR,
   deleteCallArtifact,
+  removeDirIfEmpty,
   type CallLogDetailState,
 } from "./callLogArtifacts";
 import { getCallLogMaxEntries, getCallLogRetentionDays, getCallLogsTableMaxRows } from "../logEnv";
@@ -167,6 +168,7 @@ function readOrphanCandidates(
       try {
         orphanScanCursor.day.closeSync();
       } catch {}
+      removeDirIfEmpty(path.join(baseDir, orphanScanCursor.dayName!));
       orphanScanCursor.day = null;
       orphanScanCursor.dayName = null;
       continue;
@@ -209,8 +211,11 @@ export function cleanupOrphanCallLogFiles(
         }
       });
       const referenced = findReferencedArtifacts(oldEnough);
+      const openDayName = orphanScanCursor?.dayName ?? null;
       for (const relativePath of oldEnough) {
-        if (!referenced.has(relativePath) && deleteCallArtifact(relativePath, baseDir)) deleted++;
+        if (referenced.has(relativePath)) continue;
+        const pruneEmptyParent = path.posix.dirname(relativePath) !== openDayName;
+        if (deleteCallArtifact(relativePath, baseDir, { pruneEmptyParent })) deleted++;
       }
       if (exhausted || scannedEntries === 0) break;
     }

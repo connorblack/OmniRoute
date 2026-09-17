@@ -380,6 +380,51 @@ test("orphan cleanup scans at most 100 candidates, resumes, and protects fresh f
   assert.equal(fs.existsSync(freshFile), true);
 });
 
+test("orphan cleanup never removes the day directory it is still reading", () => {
+  // macOS APFS skips live entries of a directory that is being read when rmdir is
+  // attempted on it, so pruning mid-scan left orphans behind on every traversal.
+  assert.ok(CALL_LOGS_DIR);
+  const dayDir = path.join(CALL_LOGS_DIR, "2026-04-06");
+  fs.mkdirSync(dayDir, { recursive: true });
+  for (let i = 0; i < 150; i++) {
+    fs.writeFileSync(path.join(dayDir, `${String(i).padStart(4, "0")}.json`), "{}");
+  }
+
+  const originalOpendirSync = fs.opendirSync;
+  const originalRmdirSync = fs.rmdirSync;
+  const openDirs = new Set<string>();
+  const removedWhileOpen: string[] = [];
+  fs.opendirSync = ((dirPath: fs.PathLike, options?: fs.OpenDirOptions) => {
+    const dir = originalOpendirSync(dirPath, options);
+    const key = path.resolve(String(dirPath));
+    openDirs.add(key);
+    const originalCloseSync = dir.closeSync.bind(dir);
+    dir.closeSync = () => {
+      openDirs.delete(key);
+      originalCloseSync();
+    };
+    return dir;
+  }) as typeof fs.opendirSync;
+  fs.rmdirSync = ((dirPath: fs.PathLike, options?: fs.RmDirOptions) => {
+    if (openDirs.has(path.resolve(String(dirPath)))) removedWhileOpen.push(String(dirPath));
+    originalRmdirSync(dirPath, options);
+  }) as typeof fs.rmdirSync;
+
+  let deleted = 0;
+  try {
+    for (let pass = 0; pass < 3; pass++) {
+      deleted += cleanupOrphanCallLogFiles(CALL_LOGS_DIR, { maxCandidates: 100, minAgeMs: 0 });
+    }
+  } finally {
+    fs.opendirSync = originalOpendirSync;
+    fs.rmdirSync = originalRmdirSync;
+  }
+
+  assert.deepEqual(removedWhileOpen, []);
+  assert.equal(deleted, 150);
+  assert.equal(fs.existsSync(dayDir), false, "the drained day directory is pruned");
+});
+
 test("orphan traversal bounds every directory operation and resumes", () => {
   const baseDir = path.join(TEST_DATA_DIR, "odd-artifact-tree");
   const dayDir = path.join(baseDir, "2026-04-05");
