@@ -332,7 +332,9 @@ test("getUsageForProvider parses the current $X-of-$Y aria-label with nested wid
       result.quotas && Object.keys(result.quotas).length > 0,
       `expected quotas, got message: ${result.message}`
     );
-    assert.equal(result.quotas!.session.used, 100);
+    // A single usage track is the post-2026-08-19 monthly meter, so the parsed
+    // window lands under `monthly` rather than the pre-redesign `session` key.
+    assert.equal(result.quotas!.monthly.used, 100);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
@@ -368,7 +370,7 @@ test("getUsageForProvider still finds width style on a nested child when no aria
     })) as { quotas?: Record<string, { used: number }> };
 
     // The aria-label ratio ($12 of $60 = 20%) is used, matching the nested style width fallback.
-    assert.equal(result.quotas!.session.used, 20);
+    assert.equal(result.quotas!.monthly.used, 20);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalCookie === undefined) delete process.env.OLLAMA_USAGE_COOKIE;
