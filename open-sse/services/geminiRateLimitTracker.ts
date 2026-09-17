@@ -85,13 +85,6 @@ function connectionOverrideLimits(connectionId: string): GeminiLimitEntry | null
   };
 }
 
-function resolveLimits(
-  connectionId: string,
-  modelId: string | null | undefined
-): GeminiLimitEntry | null {
-  return connectionOverrideLimits(connectionId) ?? lookupFreeTierLimits(modelId);
-}
-
 export function getModelRpd(modelId: string): number {
   return lookupFreeTierLimits(modelId)?.rpd ?? -1;
 }
@@ -366,7 +359,7 @@ export function getGeminiBudgetBlock(
   nowMs: number = Date.now()
 ): GeminiBudgetBlock | null {
   if (!connectionId || !model) return null;
-  const limits = resolveLimits(connectionId, model);
+  const limits = connectionOverrideLimits(connectionId) ?? lookupFreeTierLimits(model);
   if (!limits) return null;
   const canonicalModel = canonicalizeGeminiModel(model);
   const entry = ensureEntry(connectionId, canonicalModel, nowMs);
@@ -377,13 +370,15 @@ export function getGeminiBudgetBlock(
   if (limits.rpm === 0) return { window: "rpm", remainingMs: resetMs() };
   if (limits.tpm === 0) return { window: "tpm", remainingMs: resetMs() };
 
+  const inFlight = inFlightUnits(entry);
+
   if (limits.rpd > 0) {
-    const used = entry.dayRequests + inFlightUnits(entry);
+    const used = entry.dayRequests + inFlight;
     if (used >= limits.rpd) return { window: "rpd", remainingMs: resetMs() };
   }
 
   if (limits.rpm > 0) {
-    const used = entry.requestTimes.length + inFlightUnits(entry);
+    const used = entry.requestTimes.length + inFlight;
     if (used >= limits.rpm) {
       const times = [...entry.requestTimes, ...[...entry.inFlight.values()].map((r) => r.at)];
       const oldest = Math.min(...times);
