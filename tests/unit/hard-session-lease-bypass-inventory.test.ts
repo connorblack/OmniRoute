@@ -129,6 +129,10 @@ const EXPECTED: Record<InventoryKind, Record<string, number>> = {
     "src/app/api/providers/route.ts": 3,
     "src/app/api/providers/test-batch/route.ts": 2,
     "src/app/api/rate-limits/route.ts": 1,
+    // Fork 08a3baa22: the model-cooldowns diagnostics GET reads only id/name/email
+    // behind requireManagementAuth to label locked accounts. It never selects a
+    // connection to serve a request or dispatches upstream, so it stays class C.
+    "src/app/api/resilience/model-cooldowns/route.ts": 1,
     "src/app/api/services/dario/admin/import-from-omniroute/route.ts": 2,
     "src/app/api/settings/export-json/route.ts": 1,
     "src/app/api/settings/qdrant/embedding-models/route.ts": 1,
