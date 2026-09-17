@@ -1,6 +1,7 @@
 import { initializeRateLimits } from "@omniroute/open-sse/services/rateLimitManager.ts";
 import { errorResponse, providerCircuitOpenResponse } from "@omniroute/open-sse/utils/error.ts";
 import { getCachedSettings } from "@/lib/db/readCache";
+import type { CircuitBreaker } from "@/shared/utils/circuitBreaker";
 import { isProviderBreakerFailureStatus } from "@/sse/handlers/chatPredicates";
 import {
   getCooldownAwareRetryDecision,
@@ -24,12 +25,10 @@ type EmbeddingAttempt = {
   localRateLimit?: boolean;
 };
 
-type ProviderBreaker = {
-  canExecute(): boolean;
-  getRetryAfterMs(): number;
-  _onSuccess(): void;
-  _onFailure(): void;
-};
+type ProviderBreaker = Pick<
+  CircuitBreaker,
+  "canExecute" | "getRetryAfterMs" | "_onSuccess" | "_onFailure"
+>;
 
 export type EmbeddingFailoverOptions = {
   provider: string;
@@ -109,7 +108,6 @@ export async function runEmbeddingWithFailover<C, R extends EmbeddingAttempt>(
       }
       if (!connectionId) break;
 
-      const transportFailure = isRetryablePreOutputTransportError(result.status, result.error);
       const transportAttempt = transportRetries.get(connectionId) ?? 0;
       if (
         shouldRetrySameAccountTransport({
@@ -124,14 +122,14 @@ export async function runEmbeddingWithFailover<C, R extends EmbeddingAttempt>(
         }
         continue;
       }
+      const transportFailure = isRetryablePreOutputTransportError(result.status, result.error);
       if (!result.retryWithNextConnection && !transportFailure) break;
       excludeConnectionIds.push(connectionId);
       credentials = await select(excludeConnectionIds);
     }
 
     const selection = credentials as SelectionFailure | null;
-    const poolCoolingDown = !isRoutable(credentials) && selection?.allRateLimited === true;
-    if (poolCoolingDown) {
+    if (selection?.allRateLimited === true) {
       const decision = getCooldownAwareRetryDecision({
         retryAfter: selection.retryAfter,
         settings: retrySettings,
