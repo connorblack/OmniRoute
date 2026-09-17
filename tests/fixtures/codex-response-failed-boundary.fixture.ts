@@ -276,12 +276,11 @@ test("Codex App Server streaming failure is projected before the HTTP 200 SSE bo
   });
 });
 
-test("Codex App Server non-streaming failure is projected before the HTTP 200 JSON boundary", async () => {
+test("Codex App Server non-streaming failure is projected into its HTTP 502 error body", async () => {
   const response = await executeAppServerFailure(false);
-  assert.equal(response.status, 200);
-  const body = (await response.json()) as FailedPayload["response"] & { status: string };
+  assert.equal(response.status, 502);
+  const body = (await response.json()) as FailedPayload["response"];
 
-  assert.equal(body.status, "failed");
   assertPublicFailure(
     { type: "response.failed", response: body },
     {

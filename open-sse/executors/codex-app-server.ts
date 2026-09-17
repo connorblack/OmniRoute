@@ -1,17 +1,16 @@
-import {
-  bridgeToResponsesSSE,
-  buildResponseJSON,
-} from "../vendor/codex-chatgpt-web/bridge.ts";
+import { bridgeToResponsesSSE, buildResponseJSON } from "../vendor/codex-chatgpt-web/bridge.ts";
 import { AsyncEventQueue } from "../vendor/codex-chatgpt-web/event-queue.ts";
 import type { AdapterEvent } from "../vendor/codex-chatgpt-web/types.ts";
-import { sanitizeErrorMessage } from "../utils/error.ts";
+import { buildErrorBody, sanitizeErrorMessage } from "../utils/error.ts";
+import { projectCodexPublicError } from "../utils/codexPublicError.ts";
 import { PROVIDERS } from "../config/constants.ts";
 import { BaseExecutor, type ExecuteInput, type ExecutorExecuteResult } from "./base.ts";
+import { CodexAppServerClient, type CodexAppServerClientOptions } from "./codex/appServerClient.ts";
 import {
-  CodexAppServerClient,
-  type CodexAppServerClientOptions,
-} from "./codex/appServerClient.ts";
-import { resolveAppServerConfig, resolveThreadStartPolicy, type CodexAppServerConfig } from "./codex/appServerConfig.ts";
+  resolveAppServerConfig,
+  resolveThreadStartPolicy,
+  type CodexAppServerConfig,
+} from "./codex/appServerConfig.ts";
 import {
   translateNotification,
   translateToolCall,
@@ -283,9 +282,7 @@ export class CodexAppServerExecutor extends BaseExecutor {
           // Harness function tools are advertised via thread/start's `dynamicTools`,
           // which is an EXPERIMENTAL app-server field: opt into experimental API so
           // codex accepts it (and can emit the item/tool/call ServerRequest).
-          capabilities: hasTools
-            ? { experimentalApi: true, requestAttestation: false }
-            : null,
+          capabilities: hasTools ? { experimentalApi: true, requestAttestation: false } : null,
         });
         const threadResult = (await client.request("thread/start", {
           cwd: config.cwd,
@@ -339,7 +336,9 @@ export class CodexAppServerExecutor extends BaseExecutor {
         // request (the stateless-full-history contract every OmniRoute provider uses).
         client.onToolCall((_id, params, api) => {
           if (terminated) return;
-          const toolParams = (params && typeof params === "object" ? params : {}) as DynamicToolCallLike;
+          const toolParams = (
+            params && typeof params === "object" ? params : {}
+          ) as DynamicToolCallLike;
           translateToolCall(toolParams, (event) => events.push(event));
           // Settle the app-server request so the socket does not stall. The router
           // does not have the tool output (the harness will produce it next turn),
@@ -413,18 +412,34 @@ export class CodexAppServerExecutor extends BaseExecutor {
       // turn failure, not a completion — surface it as a real HTTP error instead
       // of folding it into a 200 JSON body. Otherwise chatCore's malformed-200
       // detector sees `output: []` and reports a misleading empty-response error
-      // (reason=empty_choices), hiding the actual upstream failure (e.g. the
-      // app-server's Codex CLI not being logged in).
+      // (reason=empty_choices). The raw upstream cause (e.g. the app-server's Codex
+      // CLI not being logged in) is logged, never returned.
       const errorEvent = collected.find(
         (e): e is Extract<AdapterEvent, { type: "error" }> => e.type === "error"
       );
-      const hasOutput = collected.some((e) => e.type === "text_delta" || e.type === "tool_call_start");
+      const hasOutput = collected.some(
+        (e) => e.type === "text_delta" || e.type === "tool_call_start"
+      );
       if (errorEvent && !hasOutput) {
+        const status = errorEvent.status ?? 502;
+        input.log?.warn?.(
+          "CODEX_APP_SERVER",
+          `Non-streaming turn failed (${status}): ${JSON.stringify(errorEvent.message)}`
+        );
+        const publicError = projectCodexPublicError({
+          status,
+          code: errorEvent.code ?? "codex_app_server_turn_failed",
+          type: errorEvent.errorType,
+        });
         return {
-          response: errorResponse(
-            errorEvent.status ?? 502,
-            errorEvent.message,
-            errorEvent.code ?? "codex_app_server_turn_failed"
+          response: new Response(
+            JSON.stringify(
+              buildErrorBody(status, publicError.message, undefined, {
+                type: publicError.type,
+                code: publicError.code,
+              })
+            ),
+            { status, headers: JSON_HEADERS }
           ),
           url: config.url,
         };
