@@ -140,7 +140,7 @@ for d in $JANITOR_RUNNER_DIRS; do
 done
 
 # 4a) disk
-USAGE=$(df --output=pcent "$JANITOR_DF_PATH" 2>/dev/null | tail -1 | tr -dc '0-9')
+USAGE=$(df -P "$JANITOR_DF_PATH" 2>/dev/null | awk 'NR==2 {print $5}' | tr -dc '0-9')
 if [ "${USAGE:-0}" -ge "$DISK_ALERT_PCT" ]; then
   say "⚠ ROOT DISK ${USAGE}% >= ${DISK_ALERT_PCT}% — clean before the next heavy run"; STATUS=1
 else
