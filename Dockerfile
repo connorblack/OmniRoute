@@ -339,7 +339,7 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,targe
 #      API surface without notice; reproducible builds need a SHA-pinned dev
 #      build, not the floating `@latest`.
 RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-npm-cache,target=/root/.npm \
-  npm config set allow-scripts=@anthropic-ai/claude-code,droid,openclaw,@google/genai,koffi,tree-sitter-bash,protobufjs --location=user \
+  npm config set allow-scripts=@anthropic-ai/claude-code,droid,openclaw,@google/genai,tree-sitter-bash,protobufjs --location=user \
   && npm install -g --no-audit --no-fund \
     @openai/codex@0.153.4 \
     @anthropic-ai/claude-code@2.1.260 \
