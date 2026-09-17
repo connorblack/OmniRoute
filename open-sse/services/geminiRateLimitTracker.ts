@@ -14,6 +14,7 @@
 
 import { createRequire } from "node:module";
 import geminiLimitsRaw from "../config/geminiRateLimits.json";
+import { getConnectionRateLimitOverrides } from "./connectionRateLimitOverrides.ts";
 import { nextDailyResetAtMs, zonedParts, zonedLocalToUtc } from "./dailyQuotaReset.ts";
 
 // This module loads well before better-sqlite3's native binding and the DB
@@ -66,6 +67,33 @@ function lookupLimits(modelId: string | null | undefined): GeminiLimitEntry | nu
   return entry;
 }
 
+const OVERRIDE_UNLIMITED = -1;
+
+function overrideLimit(value: unknown): number {
+  return typeof value === "number" && value > 0 ? value : OVERRIDE_UNLIMITED;
+}
+
+/**
+ * The registry holds free-tier limits. A connection with its own rpm/rpd/tpm
+ * overrides declares its project's actual limits (a billed tier), so those
+ * replace the registry for every model on that connection; an unset field is
+ * unlimited.
+ */
+function resolveLimits(
+  connectionId: string,
+  modelId: string | null | undefined
+): GeminiLimitEntry | null {
+  const overrides = getConnectionRateLimitOverrides(connectionId);
+  if (overrides && [overrides.rpm, overrides.rpd, overrides.tpm].some((v) => v > 0)) {
+    return {
+      rpm: overrideLimit(overrides.rpm),
+      rpd: overrideLimit(overrides.rpd),
+      tpm: overrideLimit(overrides.tpm),
+    };
+  }
+  return lookupLimits(modelId);
+}
+
 export function getModelRpd(modelId: string): number {
   return lookupLimits(modelId)?.rpd ?? -1;
 }
@@ -85,7 +113,7 @@ type LedgerEntry = {
   tokenEvents: { at: number; n: number }[];
   pacificDay: string;
   dayRequests: number;
-  inFlight: Map<number, number>;
+  inFlight: Map<number, { at: number; units: number }>;
 };
 
 const ledger = new Map<string, LedgerEntry>();
@@ -122,8 +150,8 @@ function pruneEntry(entry: LedgerEntry, nowMs: number): void {
   }
   if (entry.inFlight.size > 0) {
     const inFlightCutoff = nowMs - IN_FLIGHT_MAX_AGE_MS;
-    for (const [id, at] of entry.inFlight) {
-      if (at < inFlightCutoff) entry.inFlight.delete(id);
+    for (const [id, reservation] of entry.inFlight) {
+      if (reservation.at < inFlightCutoff) entry.inFlight.delete(id);
     }
   }
   rollDayIfNeeded(entry, nowMs);
@@ -269,20 +297,33 @@ export type GeminiReservationHandle = {
   canonicalModel: string;
   reservationId: number;
   reservedAt: number;
+  units: number;
 };
 
 let nextReservationId = 1;
 
+/**
+ * `units` is how many requests Google bills for this call: 1 for chat, the
+ * number of contents for a batch embedding call.
+ */
 export function reserveGeminiRequest(
   connectionId: string,
   model: string,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  units: number = 1
 ): GeminiReservationHandle {
   const canonicalModel = canonicalizeGeminiModel(model);
   const entry = ensureEntry(connectionId, canonicalModel, nowMs);
   const reservationId = nextReservationId++;
-  entry.inFlight.set(reservationId, nowMs);
-  return { connectionId, canonicalModel, reservationId, reservedAt: nowMs };
+  const billedUnits = Math.max(1, Math.floor(units));
+  entry.inFlight.set(reservationId, { at: nowMs, units: billedUnits });
+  return { connectionId, canonicalModel, reservationId, reservedAt: nowMs, units: billedUnits };
+}
+
+function inFlightUnits(entry: LedgerEntry): number {
+  let total = 0;
+  for (const reservation of entry.inFlight.values()) total += reservation.units;
+  return total;
 }
 
 export type GeminiSettleOutcome = {
@@ -301,8 +342,8 @@ export function settleGeminiRequest(
   entry.inFlight.delete(handle.reservationId);
   if (!isBilledStatus(outcome.upstreamStatus)) return;
   rollDayIfNeeded(entry, nowMs);
-  entry.dayRequests += 1;
-  entry.requestTimes.push(handle.reservedAt);
+  entry.dayRequests += handle.units;
+  for (let i = 0; i < handle.units; i++) entry.requestTimes.push(handle.reservedAt);
   const tokens = outcome.tokens;
   if (typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0) {
     entry.tokenEvents.push({ at: handle.reservedAt, n: tokens });
@@ -327,7 +368,7 @@ export function getGeminiBudgetBlock(
   nowMs: number = Date.now()
 ): GeminiBudgetBlock | null {
   if (!connectionId || !model) return null;
-  const limits = lookupLimits(model);
+  const limits = resolveLimits(connectionId, model);
   if (!limits) return null;
   const canonicalModel = canonicalizeGeminiModel(model);
   const entry = ensureEntry(connectionId, canonicalModel, nowMs);
@@ -339,14 +380,14 @@ export function getGeminiBudgetBlock(
   if (limits.tpm === 0) return { window: "tpm", remainingMs: resetMs() };
 
   if (limits.rpd > 0) {
-    const used = entry.dayRequests + entry.inFlight.size;
+    const used = entry.dayRequests + inFlightUnits(entry);
     if (used >= limits.rpd) return { window: "rpd", remainingMs: resetMs() };
   }
 
   if (limits.rpm > 0) {
-    const used = entry.requestTimes.length + entry.inFlight.size;
+    const used = entry.requestTimes.length + inFlightUnits(entry);
     if (used >= limits.rpm) {
-      const times = [...entry.requestTimes, ...entry.inFlight.values()];
+      const times = [...entry.requestTimes, ...[...entry.inFlight.values()].map((r) => r.at)];
       const oldest = Math.min(...times);
       return { window: "rpm", remainingMs: Math.max(0, oldest + WINDOW_MS - nowMs) };
     }

@@ -41,17 +41,14 @@ import { resolveProxyForConnection } from "@/lib/db/settings";
 import { hasBlockingProxyAssignment } from "@/lib/db/proxies";
 import {
   CircuitBreakerOpenError,
-  getCircuitBreaker,
   isLocalStreamLifecycleError,
 } from "../../shared/utils/circuitBreaker";
-import { classify429FromError, type FailureKind } from "../../shared/utils/classify429";
-import { resolveUseUpstream429BreakerHints } from "../../shared/utils/providerHints";
+import { getProviderCircuitBreaker } from "../services/providerCircuitBreaker";
 import { isFeatureFlagEnabled } from "../../shared/utils/featureFlags";
 
 import { logProxyEvent } from "../../lib/proxyLogger";
 import { noteProxyOutcome } from "./proxyOutcomeMemory";
 import { logTranslationEvent } from "../../lib/translatorEvents";
-import { getRuntimeProviderProfile } from "@omniroute/open-sse/services/accountFallback.ts";
 
 // Models that explicitly cannot run on the codex/ChatGPT-Pro OAuth pool — when
 // a caller writes `codex/deepseek-v4-pro` we transparently reroute to the
@@ -369,31 +366,7 @@ export async function checkPipelineGates(
   } = {}
 ) {
   const bypassReason = options.bypassReason || "pipeline override";
-  const providerProfile = options.providerProfile ?? (await getRuntimeProviderProfile(provider));
-  // Issue #2100 follow-up: opt-in upstream 429 hint trust per provider.
-  const useHints429 = resolveUseUpstream429BreakerHints(
-    provider,
-    (providerProfile as { useUpstream429BreakerHints?: boolean }).useUpstream429BreakerHints
-  );
-  const breaker = getCircuitBreaker(provider, {
-    failureThreshold: providerProfile.failureThreshold ?? providerProfile.circuitBreakerThreshold,
-    degradationThreshold: providerProfile.degradationThreshold,
-    resetTimeout: providerProfile.resetTimeoutMs ?? providerProfile.circuitBreakerReset,
-    // #4602: a local WS-bridge "Controller is already closed" throw is not an
-    // upstream outage — keep it from tripping the whole-provider breaker.
-    isFailure: (e) => !isLocalStreamLifecycleError(e),
-    onStateChange: (name: string, from: string, to: string) =>
-      log.info("CIRCUIT", `${name}: ${from} → ${to}`),
-    ...(useHints429
-      ? {
-          cooldownByKind: {
-            rate_limit: 60_000,
-            quota_exhausted: 3_600_000,
-          } satisfies Partial<Record<FailureKind, number>>,
-          classifyError: classify429FromError,
-        }
-      : {}),
-  });
+  const breaker = await getProviderCircuitBreaker(provider, options.providerProfile);
   if (options.ignoreCircuitBreaker && !breaker.canExecute()) {
     log.info("CIRCUIT", `Bypassing OPEN circuit breaker for ${provider} (${bypassReason})`);
   } else if (!breaker.canExecute()) {

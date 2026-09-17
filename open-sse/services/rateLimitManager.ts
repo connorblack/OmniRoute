@@ -28,6 +28,11 @@ import {
 } from "./rateLimitManager/headers";
 import { checkQueueAdmission } from "./rateLimitManager/admission";
 import {
+  clearConnectionRateLimitOverrides,
+  getConnectionRateLimitOverrides,
+  setConnectionRateLimitOverrides,
+} from "./connectionRateLimitOverrides.ts";
+import {
   markLocalRateLimitError,
   RATE_LIMIT_EXECUTION_TIMEOUT_CODE,
   RATE_LIMIT_QUEUE_WEDGED_CODE,
@@ -85,10 +90,6 @@ const limiters = new Map<string, Bottleneck>();
 
 // Store connections that have rate limit protection enabled
 const enabledConnections = new Set<string>();
-
-// Store per-connection rate limit overrides (RPM, TPM, TPD, minTime, maxConcurrent)
-// Populated from provider_connections.rateLimitOverrides on startup and refresh.
-const connectionRateLimitOverrides = new Map<string, Record<string, number>>();
 
 // Store learned limits for persistence (debounced)
 // One learned entry per limiter key (provider:connection[:model]). The previous
@@ -193,7 +194,7 @@ export function resolveRequestQueueMaxWaitMs(
     legacyDefault = Math.max(configuredMaxWaitMs, MAXAI_REQUEST_QUEUE_MAX_WAIT_MS);
   }
   const override = connectionId
-    ? connectionRateLimitOverrides.get(connectionId)?.maxWaitMs
+    ? getConnectionRateLimitOverrides(connectionId)?.maxWaitMs
     : undefined;
   return resolveOverride(override, legacyDefault);
 }
@@ -208,8 +209,7 @@ export function resolveRequestQueueMaxWaitMs(
  */
 export function resolveExecutionMaxWaitMs(connectionId?: string): number {
   const override = connectionId
-    ? (connectionRateLimitOverrides.get(connectionId) as Record<string, number> | undefined)
-        ?.executionMaxWaitMs
+    ? getConnectionRateLimitOverrides(connectionId)?.executionMaxWaitMs
     : undefined;
   return resolveOverride(override, currentRequestQueueSettings.executionMaxWaitMs);
 }
@@ -395,11 +395,11 @@ export async function initializeRateLimits() {
     updateAllLimiterSettings();
 
     // Load per-connection rate limit overrides
-    connectionRateLimitOverrides.clear();
+    clearConnectionRateLimitOverrides();
     for (const conn of connections as Array<Record<string, unknown>>) {
       const overrides = conn.rateLimitOverrides;
       if (overrides && typeof overrides === "object" && !Array.isArray(overrides)) {
-        connectionRateLimitOverrides.set(String(conn.id), overrides as Record<string, number>);
+        setConnectionRateLimitOverrides(String(conn.id), overrides as Record<string, number>);
       }
     }
 
@@ -478,11 +478,7 @@ export function isRateLimitEnabled(connectionId) {
  * @param {Record<string, number> | null} overrides - New overrides (null/undefined clears)
  */
 export function refreshConnectionRateLimits(connectionId, overrides) {
-  if (overrides === null || overrides === undefined) {
-    connectionRateLimitOverrides.delete(connectionId);
-  } else {
-    connectionRateLimitOverrides.set(connectionId, overrides);
-  }
+  setConnectionRateLimitOverrides(connectionId, overrides);
   clearPreservedReplacementSettings(connectionId);
   // Evict limiters referencing this connection so they get recreated on next use
   for (const [key, limiter] of Array.from(limiters)) {
@@ -498,7 +494,7 @@ export function refreshConnectionRateLimits(connectionId, overrides) {
 /**
  * Get or create a limiter for a given provider+connection combination
  */
-function getLimiterKey(provider, connectionId, model = null) {
+function getLimiterKey(provider: string, connectionId: string, model: string | null = null) {
   if (provider === "codex" && model) {
     return `${provider}:${getCodexRateLimitKey(connectionId, model)}`;
   }
@@ -515,10 +511,11 @@ function getLimiterKey(provider, connectionId, model = null) {
   return `${provider}:${connectionId}`;
 }
 
-function getLimiter(provider, connectionId, model = null) {
+function getLimiter(provider: string, connectionId: string, model: string | null = null) {
   const key = getLimiterKey(provider, connectionId, model);
 
-  if (!limiters.has(key)) {
+  let limiter = limiters.get(key);
+  if (!limiter) {
     // Idempotent — covers callers (and tests) that reach limiter creation
     // without going through initializeRateLimits().
     applyBottleneckDoExpirePatch();
@@ -530,7 +527,7 @@ function getLimiter(provider, connectionId, model = null) {
       options = { ...preserved, id: key };
     } else {
       const defaults = buildLimiterDefaults();
-      const overrides = connectionRateLimitOverrides.get(connectionId);
+      const overrides = getConnectionRateLimitOverrides(connectionId);
       if (overrides) {
         // 0 (or missing) means "no override — fall through to buildLimiterDefaults()".
         // Without this guard, an rpm of 0 sets reservoir=0, which Bottleneck treats
@@ -550,25 +547,26 @@ function getLimiter(provider, connectionId, model = null) {
       }
       options = { ...defaults, id: key };
     }
-    const limiter = limiterFactory(options);
-    limiterEffectiveSettings.set(limiter, { ...options });
-    limiter.on("queued", () => {
-      limiterWatchdog.noteQueued(key, limiter);
+    const created = limiterFactory(options);
+    limiterEffectiveSettings.set(created, { ...options });
+    created.on("queued", () => {
+      limiterWatchdog.noteQueued(key, created);
     });
     const markQueueProgress = () => {
-      limiterWatchdog.noteProgress(key, limiter);
+      limiterWatchdog.noteProgress(key, created);
     };
-    limiter.on("executing", markQueueProgress);
+    created.on("executing", markQueueProgress);
     // A long-running job can leave older work queued. Start the idle grace
     // from its completion, not from when that waiting work first arrived.
-    limiter.on("done", markQueueProgress);
+    created.on("done", markQueueProgress);
 
-    limiters.set(key, limiter);
+    limiters.set(key, created);
+    limiter = created;
     limiterLastUsed.set(key, Date.now());
   }
 
   limiterLastUsed.set(key, Date.now());
-  return limiters.get(key);
+  return limiter;
 }
 
 /**
@@ -587,7 +585,7 @@ export async function withRateLimit(
   connectionId,
   model,
   fn,
-  signal = null,
+  signal: AbortSignal | null = null,
   remainingBudgetMs = undefined,
   correlationId = undefined,
   opts:
@@ -830,7 +828,13 @@ export async function withRateLimit(
  * @param {number} status - HTTP status code
  * @param {string} model - Model name
  */
-export function updateFromHeaders(provider, connectionId, headers, status, model = null) {
+export function updateFromHeaders(
+  provider: string,
+  connectionId: string,
+  headers,
+  status: number,
+  model: string | null = null
+) {
   if (!enabledConnections.has(connectionId)) return;
   if (!headers) return;
 
@@ -844,8 +848,8 @@ export function updateFromHeaders(provider, connectionId, headers, status, model
     return plainHeaders[name.toLowerCase()] || null;
   };
 
-  const limit = parseInt(getHeader(headerMap.limit));
-  const remaining = parseInt(getHeader(headerMap.remaining));
+  const limit = parseInt(getHeader(headerMap.limit) ?? "");
+  const remaining = parseInt(getHeader(headerMap.remaining) ?? "");
   const resetStr = getHeader(headerMap.reset);
   const retryAfterStr = getHeader(headerMap.retryAfter);
   const overLimit = getHeader(STANDARD_HEADERS.overLimit);

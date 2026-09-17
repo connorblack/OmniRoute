@@ -60,6 +60,7 @@ export interface EmbeddingHandlerOptions {
   connectionId?: string | null;
   resolvedProvider?: EmbeddingProvider | null;
   resolvedModel?: string | null;
+  signal?: AbortSignal | null;
 }
 
 export async function createEmbeddingResponse(
@@ -386,8 +387,10 @@ export async function createEmbeddingResponse(
         getProviderCredentials(credentialsProviderId, null, null, resolvedModel, {
           excludeConnectionIds,
         }),
-      runWithConnection
+      runWithConnection,
+      { provider, model: resolvedModel, signal: options.signal }
     );
+    if (attempt.response) return attempt.response;
     credentials = attempt.credentials;
     if (!attempt.result) {
       if (credentials && "allRateLimited" in credentials && credentials.allRateLimited) {

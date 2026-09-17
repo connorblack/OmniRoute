@@ -44,6 +44,11 @@
     "rpd": 1000,
     "tpm": 30000
   },
+  "gemini-embedding-2": {
+    "rpm": 100,
+    "rpd": 1000,
+    "tpm": 30000
+  },
   "gemini-3.1-flash-lite": {
     "rpm": 15,
     "rpd": 500,

@@ -30,6 +30,15 @@ import {
 } from "./embeddingStructuredInput.ts";
 import { MAX_EMBEDDING_INLINE_ITEM_BYTES } from "@/shared/validation/schemas/apiV1";
 import { markAccountUnavailable } from "../../src/sse/services/auth.ts";
+import { updateFromHeaders, withRateLimit } from "../services/rateLimitManager.ts";
+import { getClientSafeLocalRateLimitError } from "../services/rateLimitManager/errors.ts";
+import {
+  getGeminiBudgetBlock,
+  reserveGeminiRequest,
+  settleGeminiRequest,
+  type GeminiReservationHandle,
+} from "../services/geminiRateLimitTracker.ts";
+import { estimateInputTokens } from "../utils/usageTracking.ts";
 import {
   collectJinaNativeModalities,
   isJinaNativeEmbeddingInput,
@@ -75,6 +84,7 @@ interface EmbeddingFailure {
   error: string;
   headers?: Headers;
   retryWithNextConnection?: boolean;
+  localRateLimit?: boolean;
   data?: never;
 }
 
@@ -546,7 +556,9 @@ async function handleUpstreamFailure(
         response.status,
         errorText,
         runtime.provider,
-        runtime.model
+        runtime.model,
+        null,
+        { headers: response.headers }
       );
       retryWithNextConnection = marked?.shouldFallback === true;
     } catch {
@@ -680,6 +692,53 @@ function handleEmbeddingException(
   return failure(502, `Embedding provider error: ${sanitizeErrorMessage(message)}`);
 }
 
+function embeddingInputCount(input: unknown): number {
+  return Array.isArray(input) ? Math.max(1, input.length) : 1;
+}
+
+/**
+ * Gemini's per-model free-tier budget, checked and reserved the same way chat
+ * does it. Google bills a batch embedding call as one request per content.
+ */
+function reserveGeminiEmbeddingBudget(
+  runtime: EmbeddingRuntime
+): GeminiReservationHandle | EmbeddingFailure | null {
+  if (runtime.provider !== "gemini" || !runtime.connectionId || !runtime.model) return null;
+  try {
+    const now = Date.now();
+    const block = getGeminiBudgetBlock(runtime.connectionId, runtime.model, now);
+    if (block) {
+      return {
+        ...failure(
+          429,
+          `Gemini ${block.window.toUpperCase()} budget exhausted for ${runtime.model}. Please try again later.`
+        ),
+        retryWithNextConnection: true,
+      };
+    }
+    return reserveGeminiRequest(
+      runtime.connectionId,
+      runtime.model,
+      now,
+      embeddingInputCount(runtime.body.input)
+    );
+  } catch (error) {
+    runtime.log?.error("EMBED", `Gemini budget check failed; allowing request: ${error}`);
+    return null;
+  }
+}
+
+function localRateLimitFailure(runtime: EmbeddingRuntime, error: unknown): EmbeddingFailure | null {
+  const local = getClientSafeLocalRateLimitError(error);
+  if (!local) return null;
+  runtime.log?.error("EMBED", `${runtime.provider} local rate limit ${local.code}`);
+  return {
+    ...failure(local.status, sanitizeErrorMessage(local.message)),
+    retryWithNextConnection: true,
+    localRateLimit: true,
+  };
+}
+
 async function executeEmbedding(
   runtime: EmbeddingRuntime,
   prepared: PreparedEmbeddingRequest
@@ -689,13 +748,49 @@ async function executeEmbedding(
   const singleTextsOrFailure = resolveSingleTexts(runtime);
   if (singleTextsOrFailure && !Array.isArray(singleTextsOrFailure)) return singleTextsOrFailure;
   const singleTexts = Array.isArray(singleTextsOrFailure) ? singleTextsOrFailure : null;
+  const reservation = reserveGeminiEmbeddingBudget(runtime);
+  if (reservation && "success" in reservation) return reservation;
+  const settlement = { upstreamStatus: 503, tokens: 0 };
   try {
-    const response = await dispatchEmbeddingRequest(prepared, singleTexts, runtime.reqLogger);
-    return response.ok
-      ? handleUpstreamSuccess(runtime, prepared, response, singleTexts?.length ?? 1)
-      : handleUpstreamFailure(runtime, response);
+    const response = await withRateLimit(
+      runtime.provider,
+      runtime.connectionId,
+      runtime.model,
+      () => dispatchEmbeddingRequest(prepared, singleTexts, runtime.reqLogger),
+      null,
+      undefined,
+      undefined,
+      { providerSpecificData: runtime.credentials?.providerSpecificData }
+    );
+    settlement.upstreamStatus = response.status;
+    if (runtime.connectionId) {
+      updateFromHeaders(
+        runtime.provider,
+        runtime.connectionId,
+        response.headers,
+        response.status,
+        runtime.model
+      );
+    }
+    if (!response.ok) return await handleUpstreamFailure(runtime, response);
+    const result = await handleUpstreamSuccess(
+      runtime,
+      prepared,
+      response,
+      singleTexts?.length ?? 1
+    );
+    const usage = (result.data as ParsedEmbeddingResponse).usage;
+    settlement.tokens =
+      usage?.prompt_tokens ||
+      usage?.total_tokens ||
+      estimateInputTokens({ input: runtime.body.input });
+    return result;
   } catch (error) {
-    return handleEmbeddingException(runtime, prepared, error);
+    return (
+      localRateLimitFailure(runtime, error) ?? handleEmbeddingException(runtime, prepared, error)
+    );
+  } finally {
+    if (reservation) settleGeminiRequest(reservation, settlement);
   }
 }
 

@@ -71,7 +71,7 @@ export async function POST(request, { params }) {
   }
 
   const requestedModel = body.model ? body.model.slice(body.model.indexOf("/") + 1) : null;
-  const { credentials, result } = await runEmbeddingWithFailover(
+  const { credentials, result, response } = await runEmbeddingWithFailover(
     (excludeConnectionIds) =>
       getProviderCredentialsWithQuotaPreflight(providerEntry.id, null, null, requestedModel, {
         excludeConnectionIds,
@@ -84,8 +84,10 @@ export async function POST(request, { params }) {
         // #10347 — thread the selected connection id so a hard upstream failure cools
         // the account instead of re-hitting it on every request.
         connectionId: (selected as { connectionId?: string }).connectionId ?? null,
-      })
+      }),
+    { provider: providerEntry.id, model: requestedModel, signal: request.signal }
   );
+  if (response) return response;
   if (!result) {
     if (credentials?.allRateLimited) {
       return unavailableResponse(
