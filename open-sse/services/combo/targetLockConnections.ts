@@ -1,3 +1,4 @@
+import { isModelLocked } from "../accountFallback.ts";
 import { SYNTHETIC_NOAUTH_CONNECTION_ID } from "../autoCombo/resilienceCandidateFilter.ts";
 import { getCachedProviderConnections } from "../../../src/lib/db/readCache";
 import { resolveProviderId } from "../../../src/shared/constants/providers.ts";
@@ -10,29 +11,31 @@ type LockTarget = {
 };
 
 /**
- * Connection ids whose model locks describe a combo target after it failed.
+ * Where a combo target's model locks live.
  *
- * AUTH locks the connection that served the request, so an unpinned target's
- * lock lives under one of its provider's connections or the synthetic no-auth
- * one. The combo's own synthetic failures lock the target's connection id,
- * which is "" when the target is unpinned.
+ * `targetIds` lock the whole target: the pinned connection, or for an unpinned
+ * target the combo's own synthetic "" lock and, without an allowlist, the
+ * no-auth connection. `connectionIds` are the real connections AUTH may pick;
+ * each lock there blocks only that connection.
  */
-export async function getTargetLockConnectionIds(
-  target: LockTarget,
-  log: ComboLogger
-): Promise<string[]> {
-  if (target.connectionId) return [target.connectionId];
-  if (target.allowedConnectionIds?.length) return ["", ...target.allowedConnectionIds];
+type TargetLockScope = { targetIds: string[]; connectionIds: string[] };
 
-  const ids = ["", SYNTHETIC_NOAUTH_CONNECTION_ID];
-  if (!target.provider) return ids;
+async function getTargetLockScope(target: LockTarget, log: ComboLogger): Promise<TargetLockScope> {
+  if (target.connectionId) return { targetIds: [target.connectionId], connectionIds: [] };
+  if (target.allowedConnectionIds?.length) {
+    return { targetIds: [""], connectionIds: target.allowedConnectionIds };
+  }
+
+  const targetIds = ["", SYNTHETIC_NOAUTH_CONNECTION_ID];
+  if (!target.provider) return { targetIds, connectionIds: [] };
+  const connectionIds: string[] = [];
   try {
     const connections = await getCachedProviderConnections({
       provider: resolveProviderId(target.provider),
       isActive: true,
     });
     for (const connection of connections as Array<{ id?: unknown }>) {
-      if (typeof connection?.id === "string") ids.push(connection.id);
+      if (typeof connection?.id === "string") connectionIds.push(connection.id);
     }
   } catch (error) {
     log.warn("COMBO", "Could not load provider connections for a model-lock lookup", {
@@ -40,5 +43,26 @@ export async function getTargetLockConnectionIds(
       err: error,
     });
   }
-  return ids;
+  return { targetIds, connectionIds };
+}
+
+/** Every connection id that can hold a model lock for the target. */
+export async function getTargetLockConnectionIds(
+  target: LockTarget,
+  log: ComboLogger
+): Promise<string[]> {
+  const { targetIds, connectionIds } = await getTargetLockScope(target, log);
+  return [...targetIds, ...connectionIds];
+}
+
+/** True when no connection is left to serve the model for this target. */
+export async function isTargetModelLocked(
+  target: LockTarget,
+  provider: string,
+  model: string,
+  log: ComboLogger
+): Promise<boolean> {
+  const { targetIds, connectionIds } = await getTargetLockScope(target, log);
+  const locked = (connectionId: string) => isModelLocked(provider, connectionId, model);
+  return targetIds.some(locked) || (connectionIds.length > 0 && connectionIds.every(locked));
 }
