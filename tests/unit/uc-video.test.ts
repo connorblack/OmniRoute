@@ -322,7 +322,9 @@ test("handleUcVideoGeneration (persona) 401s (retryable) when credential missing
 test("handleUcVideoGeneration (persona) times out with 504 when never ready", async () => {
   const resultUrl = "https://videogen.moveinwater.com/never";
   const fetchImpl = personaFetch({
-    pendingPolls: 1000,
+    // noSleep never advances the clock, so a fast host fits any finite poll count
+    // inside the 5 ms deadline and the result would turn ready.
+    pendingPolls: Number.POSITIVE_INFINITY,
     resultUrl,
     jwt: fakeJwt("uid", FUTURE_EXP),
   });
