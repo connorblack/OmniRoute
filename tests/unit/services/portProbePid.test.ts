@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import path from "node:path";
 import {
   parseLsofPid,
@@ -27,6 +27,20 @@ function which(command: string): string | null {
     return execFileSync("/bin/sh", ["-c", `command -v ${command}`], { encoding: "utf8" }).trim();
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether `command` can see a listener on `port` at all. A sandboxed macOS
+ * process gets an empty socket table from netstat, so no parser could find a
+ * pid there and the fallback path cannot be exercised.
+ */
+function listsListener(command: string, port: number): boolean {
+  const args = path.basename(command) === "netstat" && platform() === "darwin" ? ["-an"] : ["-tln"];
+  try {
+    return execFileSync(command, args, { encoding: "utf8" }).includes(String(port));
+  } catch {
+    return false;
   }
 }
 
@@ -160,8 +174,13 @@ test("resolvePortPid still resolves a pid on a host without lsof", async (t) => 
       "lsof must not resolve on the shimmed PATH"
     );
 
-    process.env.PATH = shim;
     await new Promise<void>((resolve) => server.listen(29992, "127.0.0.1", resolve));
+    if (!fallbacks.some(({ real }) => listsListener(real, 29992))) {
+      t.skip("ss/netstat cannot list this host's sockets from this process");
+      return;
+    }
+
+    process.env.PATH = shim;
     assert.equal(await resolvePortPid(29992), process.pid);
   } finally {
     process.env.PATH = originalPath;
