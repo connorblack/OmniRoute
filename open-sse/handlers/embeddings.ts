@@ -548,27 +548,40 @@ async function handleUpstreamFailure(
     apiKeyName: runtime.apiKeyName,
     connectionId: runtime.connectionId,
   }).catch(() => {});
-  let retryWithNextConnection = false;
-  if (runtime.connectionId) {
-    try {
-      const marked = await markAccountUnavailable(
-        runtime.connectionId,
-        response.status,
-        errorText,
-        runtime.provider,
-        runtime.model,
-        null,
-        { headers: response.headers }
-      );
-      retryWithNextConnection = marked?.shouldFallback === true;
-    } catch {
-      // The upstream response has priority over a best-effort cooldown write.
-    }
-  }
   return {
     ...failure(response.status, errorText, stripStaleEncodingHeaders(response.headers)),
-    retryWithNextConnection,
+    retryWithNextConnection: await markConnectionFailure(
+      runtime,
+      response.status,
+      errorText,
+      response.headers
+    ),
   };
+}
+
+/** Cool the failed connection; true when the request should move to another connection. */
+async function markConnectionFailure(
+  runtime: EmbeddingRuntime,
+  status: number,
+  errorText: string,
+  headers: Headers | null
+): Promise<boolean> {
+  if (!runtime.connectionId) return false;
+  try {
+    const marked = await markAccountUnavailable(
+      runtime.connectionId,
+      status,
+      errorText,
+      runtime.provider,
+      runtime.model,
+      null,
+      { headers }
+    );
+    return marked?.shouldFallback === true;
+  } catch {
+    // The upstream response has priority over a best-effort cooldown write.
+    return false;
+  }
 }
 
 function normalizeEmbeddingData(
@@ -667,11 +680,11 @@ async function handleUpstreamSuccess(
   };
 }
 
-function handleEmbeddingException(
+async function handleEmbeddingException(
   runtime: EmbeddingRuntime,
   prepared: PreparedEmbeddingRequest,
   error: unknown
-): EmbeddingFailure {
+): Promise<EmbeddingFailure> {
   const message = error instanceof Error ? error.message : String(error);
   runtime.log?.error("EMBED", `${runtime.provider} fetch error: ${message}`);
   runtime.reqLogger.logError(error, prepared.upstreamBody);
@@ -689,7 +702,10 @@ function handleEmbeddingException(
     apiKeyName: runtime.apiKeyName,
     connectionId: runtime.connectionId,
   }).catch(() => {});
-  return failure(502, `Embedding provider error: ${sanitizeErrorMessage(message)}`);
+  return {
+    ...failure(502, `Embedding provider error: ${sanitizeErrorMessage(message)}`),
+    retryWithNextConnection: await markConnectionFailure(runtime, 502, message, null),
+  };
 }
 
 function embeddingInputCount(input: unknown): number {
@@ -787,7 +803,8 @@ async function executeEmbedding(
     return result;
   } catch (error) {
     return (
-      localRateLimitFailure(runtime, error) ?? handleEmbeddingException(runtime, prepared, error)
+      localRateLimitFailure(runtime, error) ??
+      (await handleEmbeddingException(runtime, prepared, error))
     );
   } finally {
     if (reservation) settleGeminiRequest(reservation, settlement);
