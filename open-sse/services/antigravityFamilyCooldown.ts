@@ -152,13 +152,25 @@ export function rehydrateAntigravityFamilyLocksForConnections(
   }
 }
 
-/** Family lock for executor quota exhaustion. Returns false when model is absent. */
+/**
+ * Quota lock for executor quota exhaustion: the model's family, or the exact
+ * model when it belongs to neither family. Returns false when the model is
+ * absent or the connection is not an Antigravity/agy row.
+ */
 export async function markAntigravityModelQuotaExhausted(
   connectionId: string,
   retryAfterMs: number,
   model?: string | null
 ): Promise<boolean> {
   if (!model) return false;
+  if (getAntigravityQuotaFamily(model) === "other") {
+    const { getProviderConnectionById } = await import("@/lib/db/providers");
+    const conn = (await getProviderConnectionById(connectionId)) as { provider?: string } | null;
+    const provider = conn?.provider;
+    if (!provider || !isAntigravityQuotaProvider(provider)) return false;
+    lockModel(provider, connectionId, model, "quota_exhausted", retryAfterMs);
+    return true;
+  }
   const providerSpecificData = await persistAntigravityFamilyCooldown({
     connectionId,
     model,
