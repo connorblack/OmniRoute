@@ -707,10 +707,6 @@ async function handleEmbeddingException(
   };
 }
 
-function embeddingInputCount(input: unknown): number {
-  return Array.isArray(input) ? Math.max(1, input.length) : 1;
-}
-
 function reserveGeminiEmbeddingBudget(
   runtime: EmbeddingRuntime
 ): GeminiReservationHandle | EmbeddingFailure | null {
@@ -731,7 +727,7 @@ function reserveGeminiEmbeddingBudget(
       runtime.connectionId,
       runtime.model,
       now,
-      embeddingInputCount(runtime.body.input)
+      Array.isArray(runtime.body.input) ? runtime.body.input.length : 1
     );
   } catch (error) {
     runtime.log?.error("EMBED", `Gemini budget check failed; allowing request: ${error}`);
