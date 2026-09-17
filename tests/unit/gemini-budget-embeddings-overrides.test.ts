@@ -6,7 +6,6 @@ import {
   getGeminiBudgetBlock,
   resetGeminiBudgetLedgerForTests,
   setGeminiLedgerSeedSourceForTests,
-  setGeminiBilledConnectionSourceForTests,
 } from "../../open-sse/services/geminiRateLimitTracker.ts";
 import {
   clearConnectionRateLimitOverrides,
@@ -24,7 +23,6 @@ function settleBatch(connectionId: string, units: number, nowMs: number, status 
 test.beforeEach(() => {
   resetGeminiBudgetLedgerForTests();
   setGeminiLedgerSeedSourceForTests(() => []);
-  setGeminiBilledConnectionSourceForTests(() => []);
   clearConnectionRateLimitOverrides();
 });
 
@@ -74,22 +72,4 @@ test("maxConcurrent alone does not replace the free-tier registry", () => {
   setConnectionRateLimitOverrides("free", { maxConcurrent: 4 });
   settleBatch("free", 100, FIXED_NOW);
   assert.equal(getGeminiBudgetBlock("free", EMBED, FIXED_NOW + 1)?.window, "rpm");
-});
-
-test("a connection marked billed is not budgeted by the free-tier registry", () => {
-  setGeminiBilledConnectionSourceForTests(() => ["paid"]);
-  for (let minute = 0; minute < 40; minute++) {
-    settleBatch("paid", 100, FIXED_NOW + minute * 61_000);
-  }
-  assert.equal(getGeminiBudgetBlock("paid", EMBED, FIXED_NOW + 41 * 61_000), null);
-  assert.equal(getGeminiBudgetBlock("free", EMBED, FIXED_NOW + 41 * 61_000), null);
-});
-
-test("a billed connection is still budgeted by its own declared limits", () => {
-  setGeminiBilledConnectionSourceForTests(() => ["paid"]);
-  setConnectionRateLimitOverrides("paid", { rpd: 2000 });
-  for (let minute = 0; minute < 20; minute++) {
-    settleBatch("paid", 100, FIXED_NOW + minute * 61_000);
-  }
-  assert.equal(getGeminiBudgetBlock("paid", EMBED, FIXED_NOW + 21 * 61_000)?.window, "rpd");
 });

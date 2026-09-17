@@ -68,55 +68,6 @@ function lookupLimits(modelId: string | null | undefined): GeminiLimitEntry | nu
 }
 
 const OVERRIDE_UNLIMITED = -1;
-const BILLED_FLAG_TTL_MS = 60_000;
-
-type BilledConnectionSource = () => string[];
-
-/**
- * Connections whose providerSpecificData carries `geminiFreeTierBudget: false`.
- * The registry below holds Google's FREE-tier limits, so a billed project must
- * not inherit them; it is budgeted only by its own rpm/rpd/tpm overrides.
- */
-function defaultBilledConnectionSource(): string[] {
-  const { getDbInstance } = require("../../src/lib/db/core");
-  const rows = getDbInstance()
-    .prepare(
-      "SELECT id, provider_specific_data FROM provider_connections WHERE provider = 'gemini'"
-    )
-    .all() as Array<{ id: string; provider_specific_data: string | null }>;
-  return rows
-    .filter((row) => {
-      try {
-        return JSON.parse(row.provider_specific_data || "{}").geminiFreeTierBudget === false;
-      } catch {
-        return false;
-      }
-    })
-    .map((row) => row.id);
-}
-
-let billedConnectionSource: BilledConnectionSource = defaultBilledConnectionSource;
-let billedConnections = new Set<string>();
-let billedReadAtMs = 0;
-
-/** Test seam: replace the billed-connection lookup. */
-export function setGeminiBilledConnectionSourceForTests(fn: BilledConnectionSource | null): void {
-  billedConnectionSource = fn ?? defaultBilledConnectionSource;
-  billedConnections = new Set();
-  billedReadAtMs = 0;
-}
-
-function isBilledConnection(connectionId: string, nowMs: number): boolean {
-  if (nowMs - billedReadAtMs > BILLED_FLAG_TTL_MS) {
-    billedReadAtMs = nowMs;
-    try {
-      billedConnections = new Set(billedConnectionSource());
-    } catch {
-      // Fail open to the free-tier registry, the safer default for an unknown key.
-    }
-  }
-  return billedConnections.has(connectionId);
-}
 
 function overrideLimit(value: unknown): number {
   return typeof value === "number" && value > 0 ? value : OVERRIDE_UNLIMITED;
@@ -130,8 +81,7 @@ function overrideLimit(value: unknown): number {
  */
 function resolveLimits(
   connectionId: string,
-  modelId: string | null | undefined,
-  nowMs: number
+  modelId: string | null | undefined
 ): GeminiLimitEntry | null {
   const overrides = getConnectionRateLimitOverrides(connectionId);
   if (overrides && [overrides.rpm, overrides.rpd, overrides.tpm].some((v) => v > 0)) {
@@ -141,7 +91,6 @@ function resolveLimits(
       tpm: overrideLimit(overrides.tpm),
     };
   }
-  if (isBilledConnection(connectionId, nowMs)) return null;
   return lookupLimits(modelId);
 }
 
@@ -339,9 +288,6 @@ export function resetGeminiBudgetLedgerForTests(): void {
   ledger.clear();
   seeded = false;
   seedSource = defaultSeedSource;
-  billedConnectionSource = defaultBilledConnectionSource;
-  billedConnections = new Set();
-  billedReadAtMs = 0;
 }
 
 // ── Reserve / settle ─────────────────────────────────────────────────────────
@@ -422,7 +368,7 @@ export function getGeminiBudgetBlock(
   nowMs: number = Date.now()
 ): GeminiBudgetBlock | null {
   if (!connectionId || !model) return null;
-  const limits = resolveLimits(connectionId, model, nowMs);
+  const limits = resolveLimits(connectionId, model);
   if (!limits) return null;
   const canonicalModel = canonicalizeGeminiModel(model);
   const entry = ensureEntry(connectionId, canonicalModel, nowMs);
