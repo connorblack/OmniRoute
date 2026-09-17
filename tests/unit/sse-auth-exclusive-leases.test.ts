@@ -489,19 +489,21 @@ test("managed model lockout transitions the same generation to a FREE connection
   });
   assert.equal(acquired.kind, "ACQUIRED");
   if (acquired.kind !== "ACQUIRED") return;
+  // gemini-2.5-pro has a zero free-tier budget (geminiRateLimits.json), which
+  // blocks every connection; gemini-2.5-flash leaves the FREE one selectable.
   await auth.markAccountUnavailable(
     bound.id,
     429,
     "synthetic model lockout",
     "gemini",
-    "gemini-2.5-pro"
+    "gemini-2.5-flash"
   );
 
   const selected = await auth.getProviderCredentials(
     "gemini",
     null,
     [bound.id, free.id],
-    "gemini-2.5-pro",
+    "gemini-2.5-flash",
     {
       lease: {
         apiKeyId: key.id,
