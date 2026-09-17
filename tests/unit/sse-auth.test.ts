@@ -769,7 +769,8 @@ test("getProviderCredentials refuses a forced pin outside allowedConnections ins
   // policy-allowed pool keeps its constraint — resolution yields no credential instead
   // of silently continuing on another connection. The policy-blocked connection must
   // never be selected, and the allowed one must not be picked behind the caller's back.
-  assert.equal(selected, null);
+  // #13879 names the key policy as the reason, so the chat handler answers 403.
+  assert.deepEqual(selected, { blockedByKeyPolicy: true, blockedCount: 1 });
 });
 
 test("getProviderCredentials retains rate-limited accounts when allowSuppressedConnections is enabled", async () => {
