@@ -1,3 +1,4 @@
+import { initializeRateLimits } from "@omniroute/open-sse/services/rateLimitManager.ts";
 import { errorResponse, providerCircuitOpenResponse } from "@omniroute/open-sse/utils/error.ts";
 import { getCachedSettings } from "@/lib/db/readCache";
 import { isProviderBreakerFailureStatus } from "@/sse/handlers/chatPredicates";
@@ -91,6 +92,7 @@ export async function runEmbeddingWithFailover<C, R extends EmbeddingAttempt>(
       response: providerCircuitOpenResponse(provider, retryAfterSec),
     };
   }
+  await initializeRateLimits();
   const retrySettings =
     options.retrySettings ??
     resolveCooldownAwareRetrySettings(await getCachedSettings().catch(() => ({})));

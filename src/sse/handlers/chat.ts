@@ -28,6 +28,7 @@ import {
 import { getCombo, getComboForModel, getModelInfo } from "../services/model";
 import { stripContextWindowSuffix } from "@omniroute/open-sse/services/model.ts";
 import { resolveBareModelToConnectionDefault } from "@omniroute/open-sse/services/model.ts";
+import { initializeRateLimits } from "@omniroute/open-sse/services/rateLimitManager.ts";
 import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
 import { getImageModelEntry } from "@omniroute/open-sse/config/imageRegistry.ts";
 import { acceptHeaderForcesStream } from "@omniroute/open-sse/utils/aiSdkCompat.ts";
@@ -1563,6 +1564,7 @@ async function handleSingleModelChat(
   // 2. Local pressure precedes availability/breaker gates and account selection.
   const pressureGuard = checkResourcePressureBeforeProviderWork();
   if (pressureGuard) return pressureGuard.response;
+  await initializeRateLimits();
   const providerProfile = await getRuntimeProviderProfile(provider);
   const gate = await checkPipelineGates(provider, model, {
     ignoreCircuitBreaker: forceLiveComboTest || hasForcedConnection,

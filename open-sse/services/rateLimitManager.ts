@@ -103,8 +103,7 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingAsyncOperations = new Set<Promise<unknown>>();
 const PERSIST_DEBOUNCE_MS = 60_000; // Debounce persistence to every 60s max
 
-// Track initialization
-let initialized = false;
+let initialization: Promise<void> | null = null;
 
 let currentRequestQueueSettings: RequestQueueSettings = DEFAULT_RESILIENCE_SETTINGS.requestQueue;
 export const ZAI_WEB_REQUEST_QUEUE_MAX_WAIT_MS = 60_000;
@@ -368,9 +367,13 @@ function trackAsyncOperation<T>(promise: Promise<T>): Promise<T> {
  * Initialize rate limit protection from persisted connection settings.
  * Called once on app startup.
  */
-export async function initializeRateLimits() {
-  if (initialized) return;
-  initialized = true;
+/** Load persisted rate-limit state once; concurrent callers wait for the same load. */
+export function initializeRateLimits(): Promise<void> {
+  initialization ??= loadRateLimits();
+  return initialization;
+}
+
+async function loadRateLimits() {
   // Fix Bottleneck v2.19.5 doExpire bug before any limiter is created.
   applyBottleneckDoExpirePatch();
   applyBottleneckHeartbeatPatch();
@@ -1054,7 +1057,7 @@ export async function __resetRateLimitManagerForTests() {
   }
   limiters.clear();
   enabledConnections.clear();
-  initialized = false;
+  initialization = null;
   limiterLastUsed.clear();
   preservedReplacementSettings.clear();
   limiterFactory = defaultLimiterFactory;
