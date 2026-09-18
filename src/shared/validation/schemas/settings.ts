@@ -3,6 +3,10 @@ import { ROUTING_STRATEGY_VALUES } from "@/shared/constants/routingStrategies";
 import { SUPPORTED_BATCH_ENDPOINTS } from "@/shared/constants/batchEndpoints";
 import { MAX_REQUEST_BODY_LIMIT_MB, MIN_REQUEST_BODY_LIMIT_MB } from "@/shared/constants/bodySize";
 import { COMBO_CONFIG_MODES } from "@/shared/constants/comboConfigMode";
+import {
+  COMBO_COOLDOWN_WAIT_MAX_BUDGET_MS,
+  COMBO_COOLDOWN_WAIT_MAX_WAIT_MS,
+} from "@/shared/constants/comboCooldownWait";
 import { providerAllowsOptionalApiKey } from "@/shared/constants/providers";
 import { HIDEABLE_SIDEBAR_ITEM_IDS } from "@/shared/constants/sidebarVisibility";
 import { HIDEABLE_SIDEBAR_GROUP_IDS } from "@/shared/constants/sidebarGroupVisibility";
@@ -93,13 +97,14 @@ export const waitForCooldownSettingsSchema = z
   .strict();
 
 // Quota-share combo cooldown-aware retry (Variante A). Bounds mirror
-// normalizeComboCooldownWaitSettings: a single wait <= 30s, <= 10 attempts.
+// normalizeComboCooldownWaitSettings: a single wait <= 5 min, <= 10 attempts,
+// <= 1 h total budget.
 export const comboCooldownWaitSettingsSchema = z
   .object({
     enabled: z.boolean().optional(),
-    maxWaitMs: z.number().int().min(0).max(30000).optional(),
+    maxWaitMs: z.number().int().min(0).max(COMBO_COOLDOWN_WAIT_MAX_WAIT_MS).optional(),
     maxAttempts: z.number().int().min(0).max(10).optional(),
-    budgetMs: z.number().int().min(0).max(300000).optional(),
+    budgetMs: z.number().int().min(0).max(COMBO_COOLDOWN_WAIT_MAX_BUDGET_MS).optional(),
   })
   .strict();
 
@@ -123,10 +128,7 @@ export const quotaPreflightSettingsSchema = z
     defaultThresholdPercent: z.number().int().min(0).max(99).optional(),
     warnThresholdPercent: z.number().int().min(0).max(100).optional(),
     providerWindowDefaults: z
-      .record(
-        z.string().min(1),
-        z.record(z.string().min(1), z.number().int().min(0).max(100))
-      )
+      .record(z.string().min(1), z.record(z.string().min(1), z.number().int().min(0).max(100)))
       .optional(),
   })
   .strict();

@@ -11,6 +11,7 @@ import {
   resolveResilienceSettings,
   type ResilienceSettings,
 } from "../../src/lib/resilience/settings.ts";
+import { updateResilienceSchema } from "../../src/shared/validation/schemas/settings.ts";
 
 function cloneDefaults(): ResilienceSettings {
   return structuredClone(DEFAULT_RESILIENCE_SETTINGS);
@@ -71,6 +72,35 @@ test("maxWaitMs is clamped to the 5-minute hard ceiling", () => {
     comboCooldownWait: { maxWaitMs: 999_999 },
   });
   assert.equal(merged.comboCooldownWait.maxWaitMs, 300000);
+});
+
+test("budgetMs accepts a 10-minute batch budget and clamps at the 1-hour ceiling", () => {
+  const tenMinutes = mergeResilienceSettings(cloneDefaults(), {
+    comboCooldownWait: { budgetMs: 600_000 },
+  });
+  assert.equal(tenMinutes.comboCooldownWait.budgetMs, 600_000);
+
+  const overCeiling = mergeResilienceSettings(cloneDefaults(), {
+    comboCooldownWait: { budgetMs: 4_000_000 },
+  });
+  assert.equal(overCeiling.comboCooldownWait.budgetMs, 3_600_000);
+});
+
+test("the PATCH schema accepts every value the normalizer keeps", () => {
+  const kept = updateResilienceSchema.safeParse({
+    comboCooldownWait: { enabled: true, maxWaitMs: 90_000, maxAttempts: 8, budgetMs: 600_000 },
+  });
+  assert.equal(kept.success, true);
+
+  const atCeiling = updateResilienceSchema.safeParse({
+    comboCooldownWait: { maxWaitMs: 300_000, budgetMs: 3_600_000 },
+  });
+  assert.equal(atCeiling.success, true);
+
+  const overCeiling = updateResilienceSchema.safeParse({
+    comboCooldownWait: { maxWaitMs: 300_001 },
+  });
+  assert.equal(overCeiling.success, false);
 });
 
 test("budgetMs can never drop below a single maxWaitMs", () => {

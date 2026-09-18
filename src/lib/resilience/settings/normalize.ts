@@ -8,6 +8,10 @@
  * @module lib/resilience/settings/normalize
  */
 
+import {
+  COMBO_COOLDOWN_WAIT_MAX_BUDGET_MS,
+  COMBO_COOLDOWN_WAIT_MAX_WAIT_MS,
+} from "@/shared/constants/comboCooldownWait";
 import { resolveFeatureFlag } from "@/shared/utils/featureFlags";
 import type {
   JsonRecord,
@@ -134,11 +138,10 @@ export function normalizeRequestQueueSettings(
     min: 1,
     max: 24 * 60 * 60 * 1000,
   });
-  const executionMaxWaitMs = toInteger(
-    record.executionMaxWaitMs,
-    fallback.executionMaxWaitMs,
-    { min: 1, max: 24 * 60 * 60 * 1000 }
-  );
+  const executionMaxWaitMs = toInteger(record.executionMaxWaitMs, fallback.executionMaxWaitMs, {
+    min: 1,
+    max: 24 * 60 * 60 * 1000,
+  });
   const maxQueueDepth = toInteger(record.maxQueueDepth, fallback.maxQueueDepth, {
     min: 0,
     max: 100_000,
@@ -361,13 +364,19 @@ export function normalizeComboCooldownWaitSettings(
   // live); anything the upstream itself reports as longer than this should
   // fall through to the existing 429 crystallization (and the cross-request
   // cooldown layers).
-  const maxWaitMs = toInteger(record.maxWaitMs, fallback.maxWaitMs, { min: 0, max: 300000 });
+  const maxWaitMs = toInteger(record.maxWaitMs, fallback.maxWaitMs, {
+    min: 0,
+    max: COMBO_COOLDOWN_WAIT_MAX_WAIT_MS,
+  });
   const maxAttempts = toInteger(record.maxAttempts, fallback.maxAttempts, { min: 0, max: 10 });
   // Budget can never be smaller than a single wait, otherwise no wait could
-  // ever fire; floor it at maxWaitMs.
+  // ever fire; floor it at maxWaitMs. The ceiling leaves room for every
+  // attempt to wait the full single-wait maximum (10 x 5 min < 1 h), so a
+  // long-running batch job can ride out a whole quota window instead of
+  // failing the request at the old 5 min budget.
   const budgetMs = toInteger(record.budgetMs, fallback.budgetMs, {
     min: maxWaitMs,
-    max: 5 * 60 * 1000,
+    max: COMBO_COOLDOWN_WAIT_MAX_BUDGET_MS,
   });
   const enabled = toBoolean(record.enabled, fallback.enabled) && maxWaitMs > 0 && maxAttempts > 0;
 
