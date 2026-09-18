@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { updateProviderConnectionSchema } from "../../src/shared/validation/schemas";
+import { MAX_TIMER_TIMEOUT_MS } from "../../src/shared/utils/runtimeTimeouts.ts";
 
 function parse(overrides: unknown) {
   return updateProviderConnectionSchema.safeParse({
@@ -126,8 +127,27 @@ test("rateLimitOverrides: rejects float maxWaitMs", () => {
   assert.equal(parse({ maxWaitMs: 1.5 }).success, false);
 });
 
-test("rateLimitOverrides: rejects maxWaitMs above 120000 ceiling", () => {
-  assert.equal(parse({ maxWaitMs: 120001 }).success, false);
+test("rateLimitOverrides: accepts maxWaitMs up to the 1h ceiling", () => {
+  // Raised from 120_000: a pool sitting behind a busy limiter legitimately waits
+  // longer than two minutes, and a budget that expires early surfaces as
+  // OmniRoute's own 503 backpressure instead of real routing.
+  const r = parse({ maxWaitMs: 3_600_000 });
+  assert.ok(r.success, String(r.error));
+  assert.equal(r.data.rateLimitOverrides.maxWaitMs, 3_600_000);
+});
+
+test("rateLimitOverrides: rejects maxWaitMs above the 1h ceiling", () => {
+  assert.equal(parse({ maxWaitMs: 3_600_001 }).success, false);
+});
+
+test("rateLimitOverrides: accepts executionMaxWaitMs up to MAX_TIMER_TIMEOUT_MS", () => {
+  const r = parse({ executionMaxWaitMs: MAX_TIMER_TIMEOUT_MS });
+  assert.ok(r.success, String(r.error));
+  assert.equal(r.data.rateLimitOverrides.executionMaxWaitMs, MAX_TIMER_TIMEOUT_MS);
+});
+
+test("rateLimitOverrides: rejects executionMaxWaitMs above MAX_TIMER_TIMEOUT_MS", () => {
+  assert.equal(parse({ executionMaxWaitMs: MAX_TIMER_TIMEOUT_MS + 1 }).success, false);
 });
 
 test("rateLimitOverrides: maxWaitMs of 0 is valid (no override)", () => {

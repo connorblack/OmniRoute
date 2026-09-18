@@ -110,7 +110,7 @@ test.after(() => {
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-test("execution-timeout classification requires trusted provenance; queue codes classify by string (#9164/#9342)", () => {
+test("all four local rate-limit codes classify by string, provenance or not (#9164/#9342 + 2026-09-17)", () => {
   const executionError = markLocalRateLimitError(
     new Error("local execution expiration"),
     RATE_LIMIT_EXECUTION_TIMEOUT_CODE
@@ -131,10 +131,18 @@ test("execution-timeout classification requires trusted provenance; queue codes 
     new Response("wrapped local", { status: 504 })
   );
   assert.equal(getTrustedLocalRateLimitResponse(wrappedResponse)?.status, 504);
+  // 2026-09-17 (ollama-cloud): rate_limit_execution_timeout was the ONE local code
+  // still held back from the string contract #9164 gave the queue codes. The gap was
+  // load-bearing — the non-streaming provider leg lost the WeakMap-backed response on
+  // its way to the combo loop, the 504 read as a plain upstream timeout, and the key
+  // was cooled and the model locked for OUR OWN execution backstop firing. The
+  // fail-safe argument #9164 made for the queue codes applies verbatim here: a
+  // colliding provider body only exempts ITSELF from health penalties, so a collision
+  // can never amplify into a fallback storm or a fabricated success.
   assert.equal(
     isRequestScopedUpstreamFailure({ code: RATE_LIMIT_EXECUTION_TIMEOUT_CODE }),
-    false,
-    "an upstream-controlled code string must not establish local provenance"
+    true,
+    "OmniRoute's own execution backstop is request-scoped by code, like the queue codes"
   );
   assert.equal(
     isComboRequestScopedFailure(localResponse, "local execution expiration", {

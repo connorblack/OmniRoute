@@ -270,6 +270,10 @@ const REQUEST_SCOPED_UPSTREAM_ERROR_CODES: Record<string, true> = {
   rate_limit_queue_timeout: true,
   rate_limit_queue_full: true,
   rate_limit_queue_wedged: true,
+  // Same family: Bottleneck's post-dispatch execution expiration is OUR deadline
+  // (resilienceSettings.requestQueue.executionMaxWaitMs), not an upstream timeout.
+  // Its absence here let the 2026-09-17 ollama-cloud 504s cool the connection.
+  rate_limit_execution_timeout: true,
   token_limit_exceeded: true,
   // #10360: our own executor-result contract violation. An internal defect, not
   // a provider/account fault — it must never cool a connection or trip a breaker.

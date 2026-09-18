@@ -570,8 +570,16 @@ export const updateProviderConnectionSchema = z
         tpd: rateLimitOverrideNumber(10_000_000_000).optional(),
         minTime: rateLimitOverrideNumber(60_000).optional(),
         maxConcurrent: rateLimitOverrideNumber(10_000).optional(),
-        maxWaitMs: rateLimitOverrideNumber(120_000).optional(),
-        executionMaxWaitMs: rateLimitOverrideNumber(600_000).optional(),
+        // Queue-wait budget. The old 120s ceiling was below what long-running
+        // subscription pools legitimately need to sit behind a busy limiter, and a
+        // budget that expires early surfaces as OmniRoute's own 503 backpressure.
+        maxWaitMs: rateLimitOverrideNumber(3_600_000).optional(),
+        // Post-dispatch execution backstop. Capped at the platform's own timer
+        // ceiling (same bound combo.ts applies to targetTimeoutMs / comboTimeoutMs):
+        // non-incremental gateways and reasoning models legitimately run far past the
+        // old 10-minute ceiling, and an undersized backstop kills a healthy
+        // mid-flight response as a local 504.
+        executionMaxWaitMs: rateLimitOverrideNumber(MAX_TIMER_TIMEOUT_MS).optional(),
       })
       .partial()
       .strict()

@@ -26,7 +26,10 @@ import {
   providerCircuitOpenResponse,
   unavailableResponse,
 } from "@omniroute/open-sse/utils/error.ts";
-import { inheritTrustedLocalRateLimitResponse } from "@omniroute/open-sse/services/rateLimitManager/errors.ts";
+import {
+  inheritTrustedLocalRateLimitResponse,
+  isLocalRateLimitErrorCode,
+} from "@omniroute/open-sse/services/rateLimitManager/errors.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import { getRegistryEntry } from "@omniroute/open-sse/config/providerRegistry.ts";
 import { getCachedProviderNodes } from "@/lib/db/readCache";
@@ -527,6 +530,16 @@ export async function executeChatWithBreaker({
                 failure?.code === "client_disconnected" ||
                 failure?.type === "client_disconnected" ||
                 isLocalStreamLifecycleError(failure?.message ?? failure) // client abort, #4602
+              ) {
+                return;
+              }
+              // OmniRoute's own request-queue limits are backpressure we applied; cooling
+              // the connection (and locking the model) for them punishes a healthy key for
+              // our queue being busy. The payload here is a plain `{status, message, code,
+              // type}` object, so the code string is the only signal that survives.
+              if (
+                isLocalRateLimitErrorCode(failure?.code) ||
+                isLocalRateLimitErrorCode(failure?.type)
               ) {
                 return;
               }

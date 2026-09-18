@@ -24,6 +24,10 @@ import { extractUsageFromResponse } from "../usageExtractor.ts";
 import { sanitizeUsagePayloadForRequest } from "../../utils/usageTracking.ts";
 import { createErrorResult, formatProviderError } from "../../utils/error.ts";
 import { isLocalStreamLifecycleError } from "@/shared/utils/circuitBreaker";
+import {
+  getClientSafeLocalRateLimitError,
+  markTrustedLocalRateLimitResponse,
+} from "../../services/rateLimitManager/errors.ts";
 import { unwrapClinepassEnvelope } from "../../utils/clinepassEnvelope.ts";
 import { unwrapClineNonStreamingEnvelope } from "./clineResponseEnvelope.ts";
 import {
@@ -470,18 +474,27 @@ export async function runNonStreamingProviderLeg(
     // provider-failure default (#7907). chatCore classified this through
     // isLocalStreamLifecycleError before this leg took over the first send; mirror it.
     const isRequestAborted = isLocalStreamLifecycleError(error);
+    // OmniRoute's OWN request-queue limits (queue budget, execution expiration, queue
+    // full, wedge reset) reject before/around the wire send and are backpressure WE
+    // applied — the provider frequently never saw the request. This leg used to send
+    // every one of them to the bare 502 default with no errorCode, which is precisely
+    // the shape the resilience layer reads as "upstream 5xx": on 2026-09-17 that cooled
+    // the ollama-cloud key, locked deepseek-v4.1-flash (3s → 96s) and finally opened the
+    // provider circuit breaker, after which real client traffic got
+    // "503 all targets were skipped by pre-dispatch filters". The streaming catch in
+    // chatCore.ts already consults this provenance; so must this parallel path.
+    const localRateLimitFailure = isRequestAborted ? null : getClientSafeLocalRateLimitError(error);
     const failureStatus = isRequestAborted
       ? 499
-      : error instanceof Error && error.name === "TimeoutError"
-        ? 504
-        : 502;
+      : (localRateLimitFailure?.status ??
+        (error instanceof Error && error.name === "TimeoutError" ? 504 : 502));
     // A client abort is not a provider failure: formatProviderError would stamp the raw
     // upstream text as `[499]: <reason>`, leaking it to the client. chatCore has always
     // normalized this to the fixed "Request aborted".
     const failureMessage = isRequestAborted
       ? "Request aborted"
       : error instanceof Error
-        ? formatProviderError(error, provider, currentModel, failureStatus)
+        ? formatProviderError(localRateLimitFailure ?? error, provider, currentModel, failureStatus)
         : "Provider request failed";
     const receipt = buildReceipt(input, {
       httpStatus: failureStatus,
@@ -494,7 +507,16 @@ export async function runNonStreamingProviderLeg(
       connectionId,
       model: currentModel,
     });
-    const errorResult = legError(failureStatus, failureMessage, error);
+    const errorResult = legError(
+      failureStatus,
+      failureMessage,
+      error,
+      null,
+      localRateLimitFailure?.code
+    );
+    // Carry the provenance onto the generated response too: the combo attempt loop
+    // classifies targets off the Response object, not off the thrown error.
+    markTrustedLocalRateLimitResponse(errorResult.response, error);
     return {
       kind: "error",
       result: errorResult as ChatCoreErrorResult,
