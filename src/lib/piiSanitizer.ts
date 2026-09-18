@@ -58,13 +58,13 @@ const PII_PATTERNS: PIIPattern[] = [
   },
   {
     name: "phone_us",
-    regex: /(?<=^|[^A-Za-z0-9])(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?=$|[^A-Za-z0-9])/g,
+    regex: /(?<=^|[^A-Za-z0-9_])(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?=$|[^A-Za-z0-9_])/g,
     replacement: "[PHONE_REDACTED]",
     severity: "medium",
   },
   {
     name: "phone_br",
-    regex: /(?<=^|[^A-Za-z0-9])(?:\+?55[-.\s]?)?\(?\d{2}\)?[-.\s]?(?:9\d{4}|[2-5]\d{3})[-.\s]?\d{4}(?=$|[^A-Za-z0-9])/g,
+    regex: /(?<=^|[^A-Za-z0-9_])(?:\+?55[-.\s]?)?\(?\d{2}\)?[-.\s]?(?:9\d{4}|[2-5]\d{3})[-.\s]?\d{4}(?=$|[^A-Za-z0-9_])/g,
     replacement: "[PHONE_REDACTED]",
     severity: "medium",
   },
@@ -100,7 +100,7 @@ const PII_PATTERNS: PIIPattern[] = [
   },
   {
     name: "api_key_generic",
-    regex: /(?<=^|[^A-Za-z0-9])(?:sk|pk|api|key|token)[_-][a-zA-Z0-9]{20,}(?=$|[^A-Za-z0-9])/gi,
+    regex: /(?<=^|[^A-Za-z0-9_\[])(?:sk|pk|api|key|token)[_-][a-zA-Z0-9]{20,}(?=$|[^A-Za-z0-9_\]])/g,
     replacement: "[API_KEY_REDACTED]",
     severity: "high",
   },
