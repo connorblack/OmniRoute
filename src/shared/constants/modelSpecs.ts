@@ -774,23 +774,36 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
     aliases: ["MiniMax-M2.5"],
   },
 
-  // ── DeepSeek V4 (1M context, 384K max output) ────────────────────
+  // ── DeepSeek V4 and V4.1 (1M context, 384K max output) ───────────
+  // V4.1 keeps V4's limits: measured on Ollama Cloud, deepseek-v4.1-flash
+  // stops at exactly 393,216 output tokens (384 * 1024) with
+  // finish_reason "length", and a 1,074,327-token prompt overflowed.
   "deepseek-v4-pro": {
-    maxOutputTokens: 384000,
+    maxOutputTokens: 393216,
     contextWindow: 1000000,
     // Reserve 4K for visible response: thinking + response must both fit
     // under maxOutputTokens. A cap equal to maxOutputTokens leaves zero room
     // for the actual response when thinking consumes the full budget.
-    thinkingBudgetCap: 380000,
+    thinkingBudgetCap: 389120,
     supportsThinking: true,
     supportsTools: true,
+    aliases: [
+      "deepseek-v4.1-pro",
+      "ollama-cloud/deepseek-v4-pro",
+      "ollama-cloud/deepseek-v4.1-pro",
+    ],
   },
   "deepseek-v4-flash": {
-    maxOutputTokens: 384000,
+    maxOutputTokens: 393216,
     contextWindow: 1000000,
-    thinkingBudgetCap: 380000,
+    thinkingBudgetCap: 389120,
     supportsThinking: true,
     supportsTools: true,
+    aliases: [
+      "deepseek-v4.1-flash",
+      "ollama-cloud/deepseek-v4-flash",
+      "ollama-cloud/deepseek-v4.1-flash",
+    ],
   },
 
   // ── Tencent Hunyuan 3 Preview ────────────────────────────────────

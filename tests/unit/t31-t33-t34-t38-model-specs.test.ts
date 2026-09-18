@@ -137,7 +137,7 @@ test("opencode-go family: context/output caps match upstream provider docs", () 
 
   // DeepSeek V4: 1M context, 384K output
   assert.equal(getModelSpec("deepseek-v4-pro").contextWindow, 1000000);
-  assert.equal(getModelSpec("deepseek-v4-pro").maxOutputTokens, 384000);
+  assert.equal(getModelSpec("deepseek-v4-pro").maxOutputTokens, 393216);
   assert.equal(getModelSpec("deepseek-v4-flash").contextWindow, 1000000);
 
   // Tencent Hunyuan 3 Preview: 262K context/output
@@ -156,6 +156,6 @@ test("opencode-go family: capMaxOutputTokens grants full upstream budget", () =>
   assert.equal(capMaxOutputTokens("glm-5.1", 200000), 128000);
   assert.equal(capMaxOutputTokens("minimax-m2.7", 200000), 131072);
   assert.equal(capMaxOutputTokens("MiniMax-M2.5", 200000), 131072);
-  assert.equal(capMaxOutputTokens("deepseek-v4-pro", 500000), 384000);
+  assert.equal(capMaxOutputTokens("deepseek-v4-pro", 500000), 393216);
   assert.equal(capMaxOutputTokens("hy3-preview", 300000), 262144);
 });
