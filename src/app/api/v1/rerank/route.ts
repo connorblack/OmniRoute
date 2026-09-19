@@ -33,6 +33,25 @@ export async function OPTIONS() {
   });
 }
 
+const DOCKER_PRIVATE_HOST = /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}$/;
+const TAILNET_HOST = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/;
+
+/**
+ * Hosts a provider_node may point rerank at: loopback, Docker's 172.16.0.0/12, and the
+ * Tailscale tailnet (100.64.0.0/10 addresses and MagicDNS *.ts.net names), so a reranker
+ * served on another machine over the tailnet routes like a local one. ::1 stays blocked
+ * per SSRF hardening.
+ */
+function isLocalRerankHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    DOCKER_PRIVATE_HOST.test(hostname) ||
+    TAILNET_HOST.test(hostname) ||
+    hostname.endsWith(".ts.net")
+  );
+}
+
 /**
  * Build dynamic rerank provider from a local provider_node.
  * Local OpenAI-compatible backends (oMLX, vLLM, etc.) expose /v1/rerank
@@ -75,20 +94,14 @@ async function postHandler(request, context) {
   const policy = await enforceApiKeyPolicy(request, body.model);
   if (policy.rejection) return policy.rejection;
 
-  // Load local provider_nodes for rerank routing (localhost only)
+  // Load local provider_nodes for rerank routing (loopback, Docker, tailnet)
   let localProviders: ReturnType<typeof buildDynamicRerankProvider>[] = [];
   try {
     const nodes = await getCachedProviderNodes();
     localProviders = (Array.isArray(nodes) ? nodes : [])
       .filter((n: any) => {
         try {
-          const hostname = new URL(n.baseUrl).hostname;
-          // Strictly matching 172.16.0.0/12 (Docker/local) and explicitly blocking ::1 per SSRF hardening
-          return (
-            hostname === "localhost" ||
-            hostname === "127.0.0.1" ||
-            /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(hostname)
-          );
+          return isLocalRerankHost(new URL(n.baseUrl).hostname);
         } catch {
           return false;
         }
