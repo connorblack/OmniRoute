@@ -259,6 +259,28 @@ EXPOSE 20128
 # runner-web) also runs as a non-root user unless they explicitly switch back.
 USER node
 
+# Pin the official archive and layout used by https://cursor.com/install.
+# Install docs: https://cursor.com/docs/cli/installation (agent and cursor-agent aliases).
+ARG CURSOR_AGENT_VERSION=2026.10.01-e373342
+ENV PATH="/home/node/.local/bin:${PATH}"
+RUN mkdir -p "/home/node/.local/share/cursor-agent/versions/${CURSOR_AGENT_VERSION}" \
+    /home/node/.local/bin \
+  && node --input-type=module -e " \
+    import { createWriteStream } from 'node:fs'; \
+    import { Readable } from 'node:stream'; \
+    import { pipeline } from 'node:stream/promises'; \
+    const response = await fetch('https://downloads.cursor.com/lab/${CURSOR_AGENT_VERSION}/linux/' + process.arch + '/agent-cli-package.tar.gz'); \
+    if (!response.ok) throw new Error('Cursor Agent download failed: ' + response.status); \
+    await pipeline(Readable.fromWeb(response.body), createWriteStream('/tmp/cursor-agent.tar.gz'));" \
+  && tar -xzf /tmp/cursor-agent.tar.gz --strip-components=1 \
+    -C "/home/node/.local/share/cursor-agent/versions/${CURSOR_AGENT_VERSION}" \
+  && rm /tmp/cursor-agent.tar.gz \
+  && ln -s "/home/node/.local/share/cursor-agent/versions/${CURSOR_AGENT_VERSION}/cursor-agent" \
+    /home/node/.local/bin/agent \
+  && ln -s "/home/node/.local/share/cursor-agent/versions/${CURSOR_AGENT_VERSION}/cursor-agent" \
+    /home/node/.local/bin/cursor-agent \
+  && cursor-agent --version
+
 # Warns if the mounted data volume has wrong ownership
 COPY --chmod=755 scripts/check-permissions.sh /app/check-permissions.sh
 ENTRYPOINT ["/app/check-permissions.sh"]
