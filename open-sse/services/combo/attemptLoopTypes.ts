@@ -16,6 +16,7 @@ import type { ApplyStickinessResult } from "./sessionStickiness.ts";
 import type {
   ComboLike,
   ComboLogger,
+  ComboNestingContext,
   ComboRetryAfter,
   HandleSingleModel,
   IsModelAvailable,
@@ -82,6 +83,8 @@ export type AttemptLoopDeps = {
   isModelAvailable?: IsModelAvailable;
   perTargetAdmission?: PerTargetAdmissionHook | null;
   signal?: AbortSignal | null;
+  /** Null for a top-level combo; set when this combo runs as a nested combo reference. */
+  nesting?: ComboNestingContext | null;
   body: Record<string, unknown>;
   startTime: number;
   releaseStickyPinOnFailure: (

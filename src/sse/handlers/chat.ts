@@ -26,7 +26,12 @@ import {
   isDailyQuotaExhausted,
 } from "@omniroute/open-sse/services/accountFallback.ts";
 import { getCombo, getComboForModel, getModelInfo } from "../services/model";
-import { stripContextWindowSuffix } from "@omniroute/open-sse/services/model.ts";
+import { parseModel, stripContextWindowSuffix } from "@omniroute/open-sse/services/model.ts";
+import {
+  failureReasonForStatus,
+  notifyRequestCompleted,
+  notifyRequestFailed,
+} from "@omniroute/open-sse/services/combo/requestWebhookEvents.ts";
 import { resolveBareModelToConnectionDefault } from "@omniroute/open-sse/services/model.ts";
 import { initializeRateLimits } from "@omniroute/open-sse/services/rateLimitManager.ts";
 import { errorResponse } from "@omniroute/open-sse/utils/error.ts";
@@ -1359,6 +1364,7 @@ async function handleChatImplementation(
     null,
     false
   );
+  notifyDirectRequestOutcome(response, resolvedModelStr, Date.now() - telemetry.startTime);
   recordTelemetry(telemetry);
   return withModalityBridgeHeader(
     withConversationId(
@@ -1370,6 +1376,31 @@ async function handleChatImplementation(
 }
 
 export const handleChat = chatAdmission.withChatAdmission(handleChatImplementation);
+
+/**
+ * Webhook events for a model called directly. Requests served through a combo are reported by
+ * the combo's own dispatch path, so this runs only at the top-level single-model call and never
+ * inside the per-target callback that combos use.
+ */
+function notifyDirectRequestOutcome(response: Response, modelStr: string, latencyMs: number) {
+  if (response.ok) {
+    notifyRequestCompleted({
+      combo: "",
+      provider: parseModel(modelStr).provider || "unknown",
+      model: modelStr,
+      connectionId: response.headers.get("X-OmniRoute-Selected-Connection-Id"),
+      latencyMs,
+      fallbackCount: 0,
+    });
+  } else if (response.status !== 499) {
+    notifyRequestFailed({
+      combo: "",
+      reason: failureReasonForStatus(response.status),
+      latencyMs,
+      fallbackCount: 0,
+    });
+  }
+}
 
 /** Handle one resolved model through gates, credentials, and retry/fallback. */
 async function handleSingleModelChat(

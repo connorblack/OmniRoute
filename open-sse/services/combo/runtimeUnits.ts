@@ -8,6 +8,11 @@
 import { errorResponse, errorResponseWithComboDiagnostics } from "../../utils/error.ts";
 import type { ComboDiagnostics } from "../../utils/error.ts";
 import { recordComboRequest } from "../comboMetrics.ts";
+import {
+  failureReasonForStatus,
+  notifyRequestCompleted,
+  notifyRequestFailed,
+} from "./requestWebhookEvents.ts";
 import { resolveDelayMs } from "./comboPredicates.ts";
 import { isRuntimeUnitAtConcurrencyCap } from "./runtimeUnitCapacity.ts";
 import { isQuotaExhaustionResponse, withQuotaExhaustionClassification } from "./quotaExhaustion.ts";
@@ -219,8 +224,22 @@ export async function executeRuntimeUnitCombo(args: {
     allObservedFailuresQuota &&= quotaExhausted;
     return quotaExhausted;
   };
-  const finalFailure = (response: Response): Response =>
-    withQuotaExhaustionClassification(response, observedFailure ? allObservedFailuresQuota : null);
+  const finalFailure = (response: Response): Response => {
+    // A client disconnect is not a request failure, so it sends no webhook event.
+    if (response.status !== 499) {
+      notifyRequestFailed({
+        combo: args.combo.name,
+        reason: failureReasonForStatus(response.status),
+        latencyMs: Date.now() - startTime,
+        fallbackCount,
+        nesting: args.nesting,
+      });
+    }
+    return withQuotaExhaustionClassification(
+      response,
+      observedFailure ? allObservedFailuresQuota : null
+    );
+  };
   // #11462: attempts already made this loop, tracked for the attempt-budget-exceeded
   // diagnostics trace below (mirrors the poolSize/attemptOrder shape combo.ts already
   // attaches for the priority/round-robin strategies).
@@ -321,12 +340,23 @@ export async function executeRuntimeUnitCombo(args: {
         );
         releaseQualityClone(unitClone, response, quality);
         if (quality.valid) {
+          const latencyMs = Date.now() - startTime;
           recordComboRequest(args.combo.name, unit.modelStr, {
             success: true,
-            latencyMs: Date.now() - startTime,
+            latencyMs,
             fallbackCount,
             strategy: effectiveStrategy,
             target: { executionKey: unit.executionKey, stepId: unit.stepId, label: unit.label },
+          });
+          notifyRequestCompleted({
+            combo: args.combo.name,
+            provider: unit.provider,
+            model: unit.modelStr,
+            label: unit.label,
+            connectionId:
+              response.headers?.get("X-OmniRoute-Selected-Connection-Id") || unit.connectionId,
+            latencyMs,
+            fallbackCount,
           });
           return { response, unit };
         }
