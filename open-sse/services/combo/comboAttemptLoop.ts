@@ -16,7 +16,7 @@ import { buildNoUpstreamResponseDiagnostics, buildRecoveryHint } from "./pinReco
 import { formatExhaustedConnectionKey } from "./comboDiagFormat.ts";
 import { collectQuotaWindowExclusions, formatQuotaSkipMessage } from "./quotaSkipDiagnostics.ts";
 import { recordComboRequest } from "../comboMetrics.ts";
-import { notifyWebhookEvent } from "../../../src/lib/webhookDispatcher.ts";
+import { notifyRequestFailed } from "./requestWebhookEvents.ts";
 import { parseModel } from "../model.ts";
 import {
   formatComboOutcomes,
@@ -413,11 +413,12 @@ export async function dispatchWithCooldownRetry(opts: {
             strategy: deps.strategy,
           });
         }
-        notifyWebhookEvent("request.failed", {
+        notifyRequestFailed({
           combo: deps.combo.name,
           reason: "COMBO_TIMEOUT",
           latencyMs,
           fallbackCount: state.fallbackCount,
+          nesting: deps.nesting,
         });
         return errorResponseWithComboDiagnostics(504, msg, buildComboDiag("combo_timeout"), {
           code: "COMBO_TIMEOUT",
@@ -473,11 +474,12 @@ export async function dispatchWithCooldownRetry(opts: {
       finishComboTrace(deps.traceInvocationId, { status: 503 });
       if (!state.lastStatus) {
         if (state.recordedAttempts === 0) {
-          notifyWebhookEvent("request.failed", {
+          notifyRequestFailed({
             combo: deps.combo.name,
             reason: "ALL_TARGETS_SKIPPED",
             latencyMs,
             fallbackCount: state.fallbackCount,
+            nesting: deps.nesting,
           });
           const quotaSkip = formatQuotaSkipMessage(
             collectQuotaWindowExclusions(state.orderedTargets)
@@ -494,11 +496,12 @@ export async function dispatchWithCooldownRetry(opts: {
             state.observedFailure ? state.allObservedFailuresQuota : null
           );
         }
-        notifyWebhookEvent("request.failed", {
+        notifyRequestFailed({
           combo: deps.combo.name,
           reason: "ALL_ACCOUNTS_INACTIVE",
           latencyMs,
           fallbackCount: state.fallbackCount,
+          nesting: deps.nesting,
         });
         recordComboFailure(deps.effectiveSessionId, deps.combo.name);
         return errorResponseWithComboDiagnostics(

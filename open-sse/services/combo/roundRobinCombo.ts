@@ -20,6 +20,11 @@ import { formatExhaustedConnectionKey } from "./comboDiagFormat.ts";
 import { collectQuotaWindowExclusions, formatQuotaSkipMessage } from "./quotaSkipDiagnostics.ts";
 import { recordComboRequest } from "../comboMetrics.ts";
 import {
+  failureReasonForStatus,
+  notifyRequestCompleted,
+  notifyRequestFailed,
+} from "./requestWebhookEvents.ts";
+import {
   expandComboSystemPromptIfPresent,
   resolveTargetFingerprint,
 } from "../comboAgentMiddleware.ts";
@@ -155,7 +160,7 @@ export async function handleRoundRobinCombo({
   allCombos,
   signal,
   apiKeyAllowedConnections = null,
-  nesting: _nesting = null,
+  nesting = null,
   hiddenModelsByProvider = getHiddenModelsByProvider(),
   clientManagedResponsesContext: _clientManagedResponsesContext,
   deferContextOverflowWhenCompressible: _deferContextOverflowWhenCompressible = false,
@@ -433,6 +438,14 @@ export async function handleRoundRobinCombo({
   let globalAttempts = 0;
   let fallbackCount = 0;
   let recordedAttempts = 0;
+  const reportFailure = (reason: string) =>
+    notifyRequestFailed({
+      combo: combo.name,
+      reason,
+      latencyMs: Date.now() - startTime,
+      fallbackCount,
+      nesting,
+    });
   // #11134: operator-configurable shared attempt budget (clamped to the hard
   // cap). Defaults to MAX_GLOBAL_ATTEMPTS when unset.
   const maxGlobalAttempts = clampGlobalAttempts(config.maxGlobalAttempts);
@@ -657,7 +670,11 @@ export async function handleRoundRobinCombo({
             }),
             rrSafetyPromise,
           ]);
-          if (rrExpired) return result; // G4: safety timer won — stop everything
+          if (rrExpired) {
+            // G4: safety timer won — stop everything
+            reportFailure("COMBO_TIMEOUT");
+            return result;
+          }
 
           // Quota-aware scheduling: reserve the estimated budget for this
           // dispatch (opt-in, same env gate as the pre-request check). Best-effort
@@ -754,6 +771,15 @@ export async function handleRoundRobinCombo({
               result.headers?.get("x-omniroute-selected-connection-id") ||
               undefined;
             const effectiveConnectionId = selectedConnectionId || target.connectionId || "";
+            notifyRequestCompleted({
+              combo: combo.name,
+              provider,
+              model: modelStr,
+              label: target.label,
+              connectionId: effectiveConnectionId,
+              latencyMs,
+              fallbackCount,
+            });
 
             const rawModel = parseModel(modelStr).model || modelStr;
             if (provider && rawModel) {
@@ -1119,6 +1145,7 @@ export async function handleRoundRobinCombo({
   // G4: if the safety timer fired between iterations (no race captured it),
   // terminate with the actionable 504 instead of the generic exhaustion path.
   if (rrExpired) {
+    reportFailure("COMBO_TIMEOUT");
     return errorResponse(
       504,
       `Round-robin combo exceeded ${rrLoopSafetyMs}ms without a terminal response`
@@ -1169,6 +1196,7 @@ export async function handleRoundRobinCombo({
 
   if (!lastStatus) {
     if (recordedAttempts === 0) {
+      reportFailure("ALL_TARGETS_SKIPPED");
       const quotaExcluded = collectQuotaWindowExclusions(filteredTargets);
       const quotaSkip = formatQuotaSkipMessage(quotaExcluded);
       return errorResponseWithComboDiagnostics(
@@ -1186,6 +1214,7 @@ export async function handleRoundRobinCombo({
         { code: "ALL_TARGETS_SKIPPED", type: "service_unavailable" }
       );
     }
+    reportFailure("ALL_ACCOUNTS_INACTIVE");
     return new Response(
       JSON.stringify({
         error: {
@@ -1201,6 +1230,7 @@ export async function handleRoundRobinCombo({
   // #10501: same terminal-status policy as handleComboChat — see
   // comboErrorAggregation.ts::resolveComboTerminalStatus.
   const status = resolveComboTerminalStatus(rrOutcomes, lastStatus);
+  reportFailure(failureReasonForStatus(status));
   // #10314: same structured per-target aggregation as handleComboChat — list each
   // distinct reason separately (redacted), fall back to lastError when no outcome.
   const msg =
