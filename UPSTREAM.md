@@ -17,6 +17,8 @@ Find it again with `git merge-base HEAD upstream/release/v3.8.52`.
 | `3f63efea05` | PR #14473, issue #13995 | `6cb484aab1` | 2026-10-10 | Cherry-picked unchanged. The route guard now reads the saved `localOnlyManageScopeBypassPrefixes`, because the policy lives in a `globalThis` store that every bundle shares. |
 | `8c8ab3db69` | PR #14349 | `a78e37c454` | 2026-10-08 | Cherry-picked. The provider dashboard honors the chat-scoped hidden flag. |
 | `36f889fa83` | PR #14626 | `d649ac51df` | 2026-10-09 | Partial. Only the grok client version and its OAuth test. The CLI fingerprint drift check is left out because `scripts/check/check-cli-fingerprint-drift.ts` does not exist at the merge base. |
+| `72bf575f25` | PR #14144, issue #14119 | `d936cdde82` | 2026-10-11 | Cherry-picked unchanged. The OIDC callback accepts the issuer with or without its trailing slash; authentik's issuer always ends in one. |
+| `3efc28ea0c` | PR #15049 | `c3f0a91bc0` | 2026-10-11 | Cherry-picked unchanged. OIDC sign-in refuses everyone while the allowlist is empty, and settings refuse to turn OIDC on without one. |
 
 ## Waiting
 
